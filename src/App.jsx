@@ -1,69 +1,220 @@
-import { useState, useEffect } from "react"
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core"
-import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable"
-import { CSS } from "@dnd-kit/utilities"
-const pC={4:"bg-red-500",3:"bg-orange-400",2:"bg-blue-500",1:"bg-gray-300"};const pL={4:"P1",3:"P2",2:"P3",1:"P4"}
-function SortableItem({task,isActive,onComplete,depth=0}){
- const {attributes,listeners,setNodeRef,transform,transition,isDragging}=useSortable({id:task.id})
- const style={transform:CSS.Transform.toString(transform),transition,opacity:isDragging?0.5:1,marginLeft:depth?`${depth*20}px`:"0px"}
- return(<div ref={setNodeRef} style={style} {...attributes} {...listeners} className={`flex items-center gap-3 p-3 rounded-xl border shadow-sm bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 ${isActive?"ring-2 ring-zinc-900 dark:ring-white":""}`}><div className="flex gap-2">{depth>0&&<span className="text-zinc-400">└</span>}<div className={`w-2 h-2 rounded-full ${pC[task.priority]}`}/></div><span className="flex-1 text- font-medium text-zinc-900 dark:text-white">{task.content}</span><span className="text- px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 border">{pL[task.priority]}</span>{isActive&&<button onClick={()=>onComplete(task)} className="w-7 h-7 rounded-full bg-zinc-900 dark:bg-white text-white dark:text-black font-bold">✓</button>}</div>)
+
+import { useState, useEffect, useMemo } from "react";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragOverlay } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+
+function SortableItem({ id, task, parentContent, showBreadcrumb }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}
+      className="flex gap-2 p-3 rounded-xl border mb-2 bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 shadow-sm cursor-grab">
+      <span className="text-zinc-400">≡</span>
+      <div className="flex-1">
+        {showBreadcrumb && parentContent && <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-0.5">{parentContent} \u25B8</div>}
+        <div className="text-sm text-zinc-900 dark:text-white">{task.content}</div>
+        {task.childrenCount ? <span className="text-[10px] bg-zinc-100 dark:bg-zinc-800 px-1 rounded">{task.childrenCount}개</span> : null}
+      </div>
+      <span className={`text-xs px-1.5 py-0.5 rounded ${task.priority===4?"bg-red-100 text-red-600": task.priority===3?"bg-orange-100 text-orange-600":"bg-zinc-100 text-zinc-500"}`}>P{task.priority}</span>
+    </div>
+  );
 }
-function buildTaskTree(tasks){const m=new Map();tasks.forEach(t=>m.set(String(t.id),{...t,children:[],depth:0}));const r=[];tasks.forEach(t=>{const id=String(t.id);const pid=t.parent_id?String(t.parent_id):null;const n=m.get(id);if(pid&&m.has(pid)){const p=m.get(pid);n.depth=p.depth+1;p.children.push(n)}else r.push(n)});const f=[];const dfs=n=>{f.push(n);n.children.sort((a,b)=>(a.order||0)-(b.order||0));n.children.forEach(dfs)};r.sort((a,b)=>(a.order||0)-(b.order||0));r.forEach(dfs);return{flat:f}}
+
 export default function App(){
- const [theme,setTheme]=useState(localStorage.getItem("theme")||"dark")
- const [pool,setPool]=useState([]);const [active,setActive]=useState([])
- const [logs,setLogs]=useState(()=>{try{return JSON.parse(localStorage.getItem("logs")||"[]")}catch{return[]}})
- const [custom,setCustom]=useState("");const [search,setSearch]=useState("")
- const [todoistToken,setTodoistToken]=useState(localStorage.getItem("todoist_token")||"")
- const [proxyUrl,setProxyUrl]=useState(localStorage.getItem("todoist_proxy")||"https://todoist-proxy.apoco211.workers.dev/")
- const [showToken,setShowToken]=useState(false);const [activeId,setActiveId]=useState(null)
- const [status,setStatus]=useState("API키 입력 후 불러오기");const [error,setError]=useState("");const [showSubtasks,setShowSubtasks]=useState(true)
- useEffect(()=>{document.documentElement.classList.toggle("dark",theme==="dark");localStorage.setItem("theme",theme)},[theme])
- useEffect(()=>{localStorage.setItem("logs",JSON.stringify(logs))},[logs])
- async function fetchWithProxy(target,token,method="GET",body=null){
-  const headers={Authorization:`Bearer ${token}`};if(body)headers["Content-Type"]="application/json"
-  const doFetch=async(url)=>{const res=await fetch(url,{method,headers,body:body?JSON.stringify(body):undefined,mode:"cors"});const txt=await res.text();if(!res.ok)throw new Error(`${res.status} ${txt.slice(0,400)}`);try{return JSON.parse(txt)}catch{return{}}}
-  try{return await doFetch(target)}catch(e){if(!proxyUrl)throw e;const p=`${proxyUrl.replace(/\/$/,"")}?target=${encodeURIComponent(target)}`;return await doFetch(p)}
- }
- async function fetchToday(){
-  if(!todoistToken){setStatus("토큰 없음");return}
-  setStatus("불러오는 중...");setError("")
-  try{
-   const d=await fetchWithProxy("https://api.todoist.com/api/v1/tasks/filter?query=today%20%7C%20overdue",todoistToken,"GET")
-   const today=d.results||[];let all=[...today]
-   try{const sd=await fetchWithProxy("https://api.todoist.com/api/v1/tasks/filter?query=(today%20%7C%20overdue)%20%26%20subtask",todoistToken,"GET");(sd.results||[]).forEach(s=>{if(!all.find(a=>a.id===s.id))all.push(s)})}catch{}
-   const {flat}=buildTaskTree(all.map(t=>({id:String(t.id),content:t.content,priority:t.priority||1,parent_id:t.parent_id?String(t.parent_id):null,order:t.child_order||t.order||0})))
-   setPool(flat);if(active.length===0&&flat.length>0)setActive(flat.filter(f=>f.depth===0).slice(0,3))
-   setStatus(`오늘 ${today.length}개 = 총 ${flat.length}개`)
-  }catch(e){setStatus("실패");setError(String(e))}
- }
- useEffect(()=>{if(todoistToken)fetchToday()},[])
- const sensors=useSensors(useSensor(PointerSensor,{activationConstraint:{distance:8}}))
- const filtered=pool.filter(t=>!active.find(a=>a.id===t.id)).filter(t=>showSubtasks||t.depth===0).filter(t=>t.content.toLowerCase().includes(search.toLowerCase()))
- function handleDragEnd(e){const {active:a,over}=e;if(!over)return;if(active.find(x=>x.id===a.id)&&active.find(x=>x.id===over.id)){setActive(it=>{const oi=it.findIndex(i=>i.id===a.id);const ni=it.findIndex(i=>i.id===over.id);return arrayMove(it,oi,ni)});return}if(pool.find(x=>x.id===a.id)&&pool.find(x=>x.id===over.id)){setPool(it=>{const oi=it.findIndex(i=>i.id===a.id);const ni=it.findIndex(i=>i.id===over.id);return arrayMove(it,oi,ni)});return}if(pool.find(x=>x.id===a.id)&&active.find(x=>x.id===over.id)&&active.length<3){const t=pool.find(p=>p.id===a.id);if(t)setActive(p=>[...p,t]);return}if(active.find(x=>x.id===a.id)&&over.id==="pool-droppable"){setActive(p=>p.filter(x=>x.id!==a.id))}}
- async function completeTask(task){if(todoistToken&&!String(task.id).startsWith("custom-")){try{await fetchWithProxy(`https://api.todoist.com/api/v1/tasks/${task.id}/close`,todoistToken,"POST")}catch{}}const en={id:Date.now(),date:new Date().toISOString().slice(0,10),title:(task.depth>0?"└ ":"")+task.content};setLogs(p=>[en,...p]);setActive(p=>p.filter(x=>x.id!==task.id));setPool(p=>p.filter(x=>x.id!==task.id&&String(x.parent_id)!==String(task.id)))}
- async function addCustom(){
-  if(!custom.trim())return
-  const content=custom.trim();setCustom("")
-  try{
-   if(todoistToken){
-    const created=await fetchWithProxy("https://api.todoist.com/api/v1/tasks",todoistToken,"POST",{content, due_string:"today", priority:2})
-    const nt={id:String(created.id||`custom-${Date.now()}`),content:created.content||content,priority:created.priority||2,depth:0}
-    if(active.length<3)setActive(p=>[...p,nt]);else setPool(p=>[nt,...p])
-    setStatus(`추가됨: ${content} → Todoist에도 생성`)
-   }else{
-    const nt={id:`custom-${Date.now()}`,content,priority:2,depth:0}
-    if(active.length<3)setActive(p=>[...p,nt]);else setPool(p=>[nt,...p])
-   }
-  }catch(e){setError(String(e));const nt={id:`custom-${Date.now()}`,content,priority:2,depth:0};if(active.length<3)setActive(p=>[...p,nt]);else setPool(p=>[nt,...p])}
- }
- return(<div className={theme==="dark"?"dark":""}><div className="min-h-screen bg-[#f8f8fb] dark:bg-black"><div className="max-w- mx-auto min-h-screen bg-white dark:bg-zinc-950 shadow-2xl flex flex-col"><div className="sticky top-0 z-20 border-b border-zinc-200 dark:border-zinc-800 px-5 flex justify-between bg-white/90 dark:bg-zinc-950/90 backdrop-blur" style={{paddingTop:"calc(12px + env(safe-area-inset-top))"}}><div className="pt-2"><div className="text- text-zinc-500 dark:text-zinc-400">TODAY · v1.12.4 · 양방향 동기화</div><div className="font-semibold text- text-zinc-900 dark:text-white">{new Date().toLocaleDateString("ko-KR")} · {status}</div></div><button onClick={()=>setTheme(theme==="dark"?"light":"dark")} className="w-9 h-9 mt-2 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white">{theme==="dark"?"☀️":"🌙"}</button></div><DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} onDragStart={e=>setActiveId(e.active.id)}><div className="flex-1 px-4 py-4 space-y-4"><details open className="text-xs border border-zinc-200 dark:border-zinc-700 rounded-xl p-3 bg-zinc-50 dark:bg-zinc-900"><summary className="font-medium text-zinc-900 dark:text-white">🔑 Todoist API · {status}</summary><div className="mt-3 space-y-2"><div className="relative"><input type={showToken?"text":"password"} value={todoistToken} onChange={e=>{setTodoistToken(e.target.value);localStorage.setItem("todoist_token",e.target.value)}} placeholder="API token" className="w-full px-3 py-2.5 pr-10 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-900 dark:text-white text-xs"/><button type="button" onClick={()=>setShowToken(!showToken)} className="absolute right-2 top-1/2 -translate-y-1/2">👁️</button></div><input value={proxyUrl} onChange={e=>{setProxyUrl(e.target.value);localStorage.setItem("todoist_proxy",e.target.value)}} className="w-full px-3 py-2 rounded-lg border text-"/><div className="flex gap-2"><button onClick={fetchToday} className="flex-1 py-2 rounded-lg bg-zinc-900 dark:bg-white text-white dark:text-black text-xs font-bold">오늘 + 하위업무 불러오기</button><button onClick={()=>setShowSubtasks(!showSubtasks)} className="px-3 py-2 rounded-lg bg-zinc-200 dark:bg-zinc-700 text-xs text-zinc-900 dark:text-white">{showSubtasks?"숨기기":"보기"}</button></div>{error&&<div className="p-2 rounded bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 text- break-all">{error}</div>}</div></details>
+  const [theme, setTheme] = useState(()=> localStorage.getItem("theme")||"light");
+  const [tasks, setTasks] = useState([]);
+  const [top3Ids, setTop3Ids] = useState(()=> JSON.parse(localStorage.getItem("top3_ids")||"[]"));
+  const [logs, setLogs] = useState(()=> JSON.parse(localStorage.getItem("completed_logs")||"[]"));
+  const [activeTab, setActiveTab] = useState("today");
+  const [activeId, setActiveId] = useState(null);
+  const [expanded, setExpanded] = useState(new Set(["1","2"]));
+  const [newContent, setNewContent] = useState("");
+  const [newPriority, setNewPriority] = useState(3);
+  const [newParent, setNewParent] = useState("");
+  const sensors = useSensors(useSensor(PointerSensor,{activationConstraint:{distance:5}}));
 
-<div className="sticky top- z-10 p-3 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800"><div className="text- font-bold text-blue-800 dark:text-blue-200 mb-1">➕ 추가 업무 (Todoist에도 추가됨)</div><div className="flex gap-2"><input value={custom} onChange={e=>setCustom(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCustom()} placeholder="예: 쓰레기통 비닐 주문" className="flex-1 px-3 py-2.5 rounded-xl border border-blue-300 dark:border-blue-700 bg-white dark:bg-zinc-900 text-zinc-900 dark:text-white text-sm outline-none"/><button onClick={addCustom} className="px-5 py-2.5 rounded-xl bg-blue-600 dark:bg-blue-500 text-white text-sm font-bold">추가</button></div></div>
+  useEffect(()=>{ document.documentElement.classList.toggle("dark", theme==="dark"); localStorage.setItem("theme", theme); },[theme]);
+  useEffect(()=> localStorage.setItem("top3_ids", JSON.stringify(top3Ids)), [top3Ids]);
+  useEffect(()=> localStorage.setItem("completed_logs", JSON.stringify(logs)), [logs]);
 
-<div><h2 className="font-semibold mb-2 text-zinc-900 dark:text-white">지금 하는 3개 ({active.length}/3)</h2><SortableContext items={active.map(a=>a.id)} strategy={verticalListSortingStrategy}><div className="space-y-2 min-h- p-2 rounded-2xl border-2 border-dashed border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900/50">{active.length===0&&<div className="text-center py-12 text-zinc-400 text-sm">오늘 일정 불러오면 여기에</div>}{active.map((t,i)=><div key={t.id} className="relative"><div className="absolute -left-1 -top-1 w-5 h-5 rounded-full bg-zinc-900 dark:bg-white text-white dark:text-black text- flex items-center justify-center font-bold z-10">{i+1}</div><SortableItem task={t} isActive onComplete={completeTask} depth={t.depth}/></div>)}</div></SortableContext></div><div><div className="flex justify-between mb-2"><h2 className="font-semibold text-zinc-900 dark:text-white">오늘 풀 ({filtered.length})</h2><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="검색" className="w-24 px-2 py-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white text-xs border"/></div><div id="pool-droppable" className="space-y-2 max-h- overflow-auto"><SortableContext items={filtered.map(a=>a.id)} strategy={verticalListSortingStrategy}>{filtered.map(t=><SortableItem key={t.id} task={t} depth={t.depth}/>)}</SortableContext></div></div></div><DragOverlay>{activeId?<div className="p-3 rounded-xl bg-white dark:bg-zinc-900 shadow-xl border text-sm text-zinc-900 dark:text-white">{pool.find(p=>p.id===activeId)?.content||active.find(a=>a.id===activeId)?.content}</div>:null}</DragOverlay></DndContext>
+  useEffect(()=>{
+    if(tasks.length===0){
+      const mock=[
+        {id:"1", content:"주간 피드백 정리", priority:4, parent_id:null},
+        {id:"1-1", content:"이메일 발송", priority:3, parent_id:"1"},
+        {id:"1-2", content:"데이터 정리", priority:2, parent_id:"1"},
+        {id:"2", content:"고객사 미팅 준비", priority:4, parent_id:null},
+        {id:"2-1", content:"이메일 발송", priority:3, parent_id:"2"},
+        {id:"3", content:"힐링코드 5분", priority:3, parent_id:null},
+        {id:"4", content:"운동 30분", priority:2, parent_id:null},
+        {id:"5", content:"아파트 관리비 내기", priority:1, parent_id:null},
+      ];
+      setTasks(mock);
+      if(top3Ids.length===0) setTop3Ids(["1","3"]);
+    }
+  },[]);
 
-<div className="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50"><details open className="group"><summary className="flex justify-between px-5 py-3 cursor-pointer list-none text- font-medium text-zinc-600 dark:text-zinc-400">🛠️ 빌드 히스토리 · v1.12.4 <span>⌄</span></summary><div className="px-5 pb-4 space-y-2 text- text-zinc-700 dark:text-zinc-300"><div className="flex gap-2"><span className="shrink-0 px-1.5 py-0.5 rounded bg-zinc-900 dark:bg-white text-white dark:text-black font-bold">v1.12.4</span><span>2026-09-26 11:55</span><span className="font-bold text-blue-600">추가 업무 양방향 동기화 · Todoist에도 생성 · 추가창 상단 고정</span></div><div className="flex gap-2"><span className="shrink-0 px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700">v1.12.3</span><span>2026-09-26 11:48</span><span>다크모드 글자 안보임 수정 · 야간 가독성 100%</span></div><div className="flex gap-2"><span className="shrink-0 px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700">v1.12.2</span><span>2026-09-26 11:41</span><span>today|overdue로 12개 정상 표시 · 사진 증빙</span></div><div className="flex gap-2"><span className="shrink-0 px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700">v1.12</span><span>2026-09-26 11:23</span><span>API v1 GET 적용 · 400 수정</span></div></div></details></div>
-<div className="sticky bottom-0 border-t bg-white/90 dark:bg-zinc-950/90 backdrop-blur p-3 flex gap-2"><button className="flex-1 py-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-white text-sm">📅 기록 보기</button><button onClick={()=>{if(confirm("logs 초기화?")){setLogs([]);localStorage.removeItem("logs")}}} className="px-4 py-3 rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black text-sm">초기화</button></div>
-</div></div></div>)
+  const taskMap = useMemo(()=> Object.fromEntries(tasks.map(t=>[t.id,t])), [tasks]);
+  const tasksWithMeta = useMemo(()=> tasks.map(t=> ({
+    ...t,
+    parentContent: t.parent_id ? taskMap[t.parent_id]?.content : null,
+    childrenCount: tasks.filter(c=>c.parent_id===t.id).length
+  })), [tasks, taskMap]);
+
+  const topTasks = useMemo(()=> top3Ids.map(id=> tasksWithMeta.find(t=>t.id===id)).filter(Boolean), [tasksWithMeta, top3Ids]);
+  const rootTasks = useMemo(()=> tasksWithMeta.filter(t=> !t.parent_id), [tasksWithMeta]);
+  const poolRoots = useMemo(()=> rootTasks.filter(t=> !top3Ids.includes(t.id)), [rootTasks, top3Ids]);
+
+  const allIds = useMemo(()=> [...top3Ids, ...poolRoots.map(t=>t.id), ...tasks.filter(t=>t.parent_id).map(t=>t.id)], [top3Ids, poolRoots, tasks]);
+
+  const handleDragEnd = (e)=>{
+    const {active, over} = e; setActiveId(null); if(!over) return;
+    const a=active.id, o=over.id;
+    const inTop = top3Ids.includes(a);
+    const overTop = top3Ids.includes(o) || o==="top-container";
+    if(!inTop && overTop){ if(top3Ids.length>=3){ alert("Top3는 최대 3개!"); return;} setTop3Ids(p=>[...p,a]); return; }
+    if(inTop && !overTop){ setTop3Ids(p=>p.filter(x=>x!==a)); return; }
+    if(inTop && overTop){ const oi=top3Ids.indexOf(a), ni=top3Ids.indexOf(o); if(oi!==-1&&ni!==-1) setTop3Ids(arrayMove(top3Ids, oi, ni)); return; }
+    if(!inTop && !overTop){ const oi=tasks.findIndex(t=>t.id===a), ni=tasks.findIndex(t=>t.id===o); if(oi!==-1&&ni!==-1) setTasks(arrayMove(tasks, oi, ni)); }
+  };
+
+  const completeTask = (id)=>{
+    const t = taskMap[id]; if(!t) return;
+    // Todoist API: POST /api/v1/tasks/{id}/close would be here via fetchWithProxy
+    const log={ id, content:t.content, parentContent: t.parent_id? taskMap[t.parent_id]?.content:null, completed_at:new Date().toISOString(), dateKey:new Date().toISOString().slice(0,10) };
+    setLogs(p=>[log,...p]);
+    // if parent, keep children? For v1.14.1 we remove only completed id, children stay (orphan) or remove if parent completed with confirm
+    if(!t.parent_id){
+      const children = tasks.filter(c=>c.parent_id===id);
+      if(children.length>0){
+        if(!confirm(`하위 ${children.length}개도 같이 완료할까요? (취소하면 부모만 완료)`)){ setTasks(p=>p.filter(x=>x.id!==id)); setTop3Ids(p=>p.filter(x=>x!==id)); return; }
+        // complete all
+        children.forEach(c=>{ const cl={id:c.id, content:c.content, parentContent:t.content, completed_at:new Date().toISOString(), dateKey:log.dateKey}; setLogs(p=>[cl,...p]); });
+        setTasks(p=>p.filter(x=>x.id!==id && x.parent_id!==id));
+      } else { setTasks(p=>p.filter(x=>x.id!==id)); }
+    } else { setTasks(p=>p.filter(x=>x.id!==id)); }
+    setTop3Ids(p=>p.filter(x=>x!==id));
+  };
+
+  const addTask = ()=>{
+    if(!newContent.trim()) return;
+    const newId=Date.now().toString();
+    const nt={ id:newId, content:newContent.trim(), priority:newPriority, parent_id:newParent||null };
+    setTasks(p=>[...p, nt]);
+    // Todoist API: POST /api/v1/tasks {content, priority, parent_id, due_string:"today"}
+    setNewContent(""); setNewParent("");
+  };
+
+  const groupedLogs = useMemo(()=>{
+    const g={}; logs.forEach(l=>{ if(!g[l.dateKey]) g[l.dateKey]=[]; g[l.dateKey].push(l); }); return Object.entries(g).sort((a,b)=> b[0].localeCompare(a[0]));
+  },[logs]);
+
+  return (
+    <div className={theme}>
+      <div className="min-h-screen bg-zinc-50 dark:bg-black flex justify-center">
+        <div className="w-[430px] bg-white dark:bg-zinc-950 min-h-screen border-x border-zinc-200 dark:border-zinc-800 flex flex-col">
+          <div className="sticky top-0 z-30 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 flex justify-between items-center">
+            <span className="font-bold dark:text-white">Daily-Todo v1.14.1</span>
+            <button onClick={()=> setTheme(theme==="light"?"dark":"light")} className="w-9 h-9 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">{theme==="light"?"🌙":"☀️"}</button>
+          </div>
+          <div className="flex border-b border-zinc-200 dark:border-zinc-800 sticky top-[52px] z-20 bg-white dark:bg-zinc-950">
+            <button onClick={()=>setActiveTab("today")} className={`flex-1 py-3 text-sm font-semibold ${activeTab==="today"?"text-black dark:text-white border-b-2 border-black dark:border-white":"text-zinc-400"}`}>오늘 할 일</button>
+            <button onClick={()=>setActiveTab("history")} className={`flex-1 py-3 text-sm font-semibold ${activeTab==="history"?"text-black dark:text-white border-b-2 border-black dark:border-white":"text-zinc-400"}`}>날짜별 완료 ({logs.length})</button>
+            <button onClick={()=>setActiveTab("build")} className={`flex-1 py-3 text-sm font-semibold ${activeTab==="build"?"text-black dark:text-white border-b-2 border-black dark:border-white":"text-zinc-400"}`}>빌드 히스토리</button>
+          </div>
+
+          <div className="bg-blue-600 dark:bg-blue-700 p-3 sticky top-[97px] z-10">
+            <div className="flex gap-2">
+              <input value={newContent} onChange={e=>setNewContent(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask()} placeholder="추가 업무 입력 + Enter" className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"/>
+              <select value={newPriority} onChange={e=>setNewPriority(Number(e.target.value))} className="px-2 rounded-lg text-sm"><option value={4}>P4</option><option value={3}>P3</option><option value={2}>P2</option><option value={1}>P1</option></select>
+              <button onClick={addTask} className="px-3 bg-black text-white rounded-lg text-sm">추가</button>
+            </div>
+            <div className="flex gap-2 mt-2">
+              <select value={newParent} onChange={e=>setNewParent(e.target.value)} className="flex-1 px-2 py-1 rounded text-xs"><option value="">부모 없음 (최상위)</option>{rootTasks.map(r=><option key={r.id} value={r.id}>{r.content} 하위로</option>)}</select>
+              <span className="text-[11px] text-blue-100 py-1">Todoist에도 동시 생성</span>
+            </div>
+          </div>
+
+          {activeTab==="today" && (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={e=>setActiveId(e.active.id)} onDragEnd={handleDragEnd}>
+              <div className="p-4 flex-1">
+                <h2 className="font-bold text-sm mb-2 dark:text-white">지금 하는 3개 <span className="font-normal text-zinc-400">하위 단독이면 부모 breadcrumb 표시</span></h2>
+                <SortableContext items={top3Ids} strategy={verticalListSortingStrategy}>
+                  <div id="top-container" className="min-h-[160px] p-2 rounded-xl bg-zinc-50 dark:bg-zinc-900 border-2 border-dashed border-zinc-200 dark:border-zinc-800 mb-6">
+                    {topTasks.length===0 && <div className="text-center text-zinc-400 text-sm py-8">아래에서 드래그해서 올려보세요!</div>}
+                    {topTasks.map(t=> {
+                      const children = tasksWithMeta.filter(c=>c.parent_id===t.id);
+                      const showBread = !!t.parent_id && !top3Ids.includes(t.parent_id);
+                      return (
+                        <div key={t.id}>
+                          <div className="flex gap-2"><div className="flex-1"><SortableItem id={t.id} task={t} parentContent={t.parentContent} showBreadcrumb={showBread}/></div><button onClick={()=>completeTask(t.id)} className="h-[46px] px-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm">✓</button></div>
+                          {children.length>0 && !t.parent_id && (
+                            <div className="ml-6 border-l border-zinc-200 dark:border-zinc-700 pl-3 mb-3">
+                              {children.map(c=> (
+                                <div key={c.id} className="flex gap-2 items-center py-1">
+                                  <button onClick={()=>completeTask(c.id)} className="w-5 h-5 border rounded flex items-center justify-center text-xs">□</button>
+                                  <span className="text-sm flex-1 dark:text-zinc-200">{c.content}</span>
+                                  <span className="text-[11px] text-zinc-400">하위만 완료</span>
+                                </div>
+                              ))}
+                              <div className="text-[11px] text-zinc-400 mt-1">진행 {tasks.filter(x=>x.parent_id===t.id).length - children.length}/{tasks.filter(x=>true).length} - 부모 Top3에서 자식 하나씩 처리하면 Todoist에는 자식만 close</div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </SortableContext>
+
+                <h2 className="font-bold text-sm mb-2 dark:text-white">오늘 풀 ({poolRoots.length})</h2>
+                <SortableContext items={poolRoots.map(t=>t.id)} strategy={verticalListSortingStrategy}>
+                  <div>
+                    {poolRoots.map(r=>{
+                      const children = tasksWithMeta.filter(c=>c.parent_id===r.id);
+                      const isExp = expanded.has(r.id);
+                      return (
+                        <div key={r.id}>
+                          <div className="flex gap-2"><div className="flex-1"><SortableItem id={r.id} task={r}/></div><button onClick={()=>setExpanded(s=>{const n=new Set(s); if(n.has(r.id)) n.delete(r.id); else n.add(r.id); return n;})} className="h-[46px] px-2 text-xs bg-zinc-100 dark:bg-zinc-800 rounded-xl">{isExp?"▲":"▼"} {children.length}</button><button onClick={()=>completeTask(r.id)} className="h-[46px] px-3 bg-zinc-200 dark:bg-zinc-800 rounded-xl text-sm">✓</button></div>
+                          {isExp && children.map(c=> (
+                            <div key={c.id} className="ml-6 flex gap-2"><div className="flex-1"><SortableItem id={c.id} task={c} parentContent={r.content} showBreadcrumb={false}/></div><button onClick={()=>completeTask(c.id)} className="h-[46px] px-3 bg-zinc-100 dark:bg-zinc-800 rounded-xl text-xs">✓ 하위</button></div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </SortableContext>
+              </div>
+              <DragOverlay>{activeId ? <div className="p-3 bg-white dark:bg-zinc-900 shadow-xl rounded-xl border text-sm dark:text-white">{taskMap[activeId]?.parent_id ? `${taskMap[taskMap[activeId].parent_id]?.content} ▸ ` : ""}{taskMap[activeId]?.content}</div> : null}</DragOverlay>
+            </DndContext>
+          )}
+
+          {activeTab==="history" && (
+            <div className="p-4">
+              {groupedLogs.length===0 && <div className="text-sm text-zinc-400">아직 완료 없음</div>}
+              {groupedLogs.map(([date, items])=> (
+                <div key={date} className="mb-6"><div className="font-semibold text-sm mb-2 dark:text-white">{date} · {items.length}개</div>{items.map((l,i)=>(<div key={i} className="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-900 border dark:border-zinc-800 mb-2 text-sm"><span className="text-green-600 mr-2">✓</span>{l.parentContent && <span className="text-[11px] text-zinc-500">{l.parentContent} ▸ </span>}<span className="dark:text-zinc-200">{l.content}</span><span className="float-right text-xs text-zinc-400">{new Date(l.completed_at).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})}</span></div>))}</div>
+              ))}
+            </div>
+          )}
+
+          {activeTab==="build" && (
+            <div className="p-4 text-sm">
+              {[
+                {v:"v1.14.1", d:"2026-09-27", s:"현재", t:"하위 breadcrumb + 다크토글 + 체크리스트 + 추가칸 통합"},
+                {v:"v1.13.0", d:"2026-09-27", s:"버그수정", t:"Top3 수동 드래그 + 양방향 이동 fix"},
+                {v:"v1.12.4", d:"2026-09-26", s:"성공", t:"추가업무 칸 상단 고정 + Todoist POST /tasks 양방향"},
+                {v:"v1.12.2", d:"2026-09-26", s:"버그수정", t:"다크모드 text-white 수정"},
+                {v:"v1.11", d:"2026-09-26", s:"성공", t:"today|overdue 필터로 12개 복구"},
+                {v:"v1.10", d:"2026-09-26", s:"버그수정", t:"rest/v2 410 Gone -> v1 마이그레이션"},
+                {v:"v1.8", d:"2026-09-26", s:"최초", t:"최초 구현 @dnd-kit + Todoist 연동"},
+              ].map(b=>(
+                <div key={b.v} className="border-l-2 border-zinc-200 dark:border-zinc-700 pl-3 py-2 mb-2"><div className="flex gap-2"><span className="font-bold dark:text-white">{b.v}</span><span className="text-xs px-1.5 bg-zinc-100 dark:bg-zinc-800 rounded">{b.s}</span><span className="text-xs text-zinc-400">{b.d}</span></div><div className="text-zinc-600 dark:text-zinc-300 mt-1">{b.t}</div></div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
