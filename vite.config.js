@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-  base: './', // GitHub Pages용 상대경로
+  base: './',base: '/Daily-Todo/', // GitHub Pages용 상대경로
   plugins: [
     react(),
     VitePWA({
