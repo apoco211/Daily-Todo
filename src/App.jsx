@@ -14,9 +14,9 @@ function SortableItem({ id, task, parentContent, showBreadcrumb }) {
       className="flex gap-2 p-3 rounded-xl border mb-2 bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-sm cursor-grab">
       <span className="text-zinc-400">≡</span>
       <div className="flex-1">
-        {showBreadcrumb && parentContent && <div className="text-[11px] text-zinc-500 dark:text-zinc-300 mb-0.5">{parentContent} ▸</div>}
+        {showBreadcrumb && parentContent && <div className="text- text-zinc-500 dark:text-zinc-300 mb-0.5">{parentContent} ▸</div>}
         <div className="text-sm text-zinc-900 dark:text-zinc-100">{task.content}</div>
-        {task.childrenCount? <span className="text-[10px] bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-200 px-1.5 py-0.5 rounded">{task.childrenCount}개</span> : null}
+        {task.childrenCount? <span className="text- bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-200 px-1.5 py-0.5 rounded">{task.childrenCount}개</span> : null}
       </div>
       <span className={`text-xs px-1.5 py-0.5 rounded h-fit ${task.priority===4?"bg-red-100 dark:bg-red-950 text-red-600 dark:text-red-300": task.priority===3?"bg-orange-100 dark:bg-orange-950 text-orange-600 dark:text-orange-300":"bg-zinc-100 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-200"}`}>P{task.priority}</span>
     </div>
@@ -40,7 +40,7 @@ export default function App(){
   const sensors = useSensors(useSensor(PointerSensor,{activationConstraint:{distance:5}}));
 
   useEffect(()=>{ document.documentElement.classList.toggle("dark", theme==="dark"); localStorage.setItem("theme", theme); },[theme]);
-  useEffect(()=> localStorage.setItem("top3_ids", JSON.stringify(top3Ids)), [top3Ids]);
+  useEffect(()=> localStorage.setItem("top3_ids", JSON.stringify(top3Ids)), );
   useEffect(()=> localStorage.setItem("completed_logs", JSON.stringify(logs)), [logs]);
 
   const fetchWithProxy = async (endpoint, options={}) => {
@@ -48,27 +48,34 @@ export default function App(){
      ...options,
       headers: { Authorization: `Bearer ${token}`, "Content-Type":"application/json",...(options.headers||{}) }
     });
-    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    if(!res.ok) {
+      const txt = await res.text();
+      throw new Error(`HTTP ${res.status} ${txt.slice(0,200)}`);
+    }
     return res.json();
   };
 
   const loadTodoist = async (tk = token) => {
-    if(!tk){ setFetchStatus("no-token"); return; }
+    if(!tk){ setFetchStatus("no-token (⚙️에서 토큰 설정 필요)"); return; }
     try {
-      setFetchStatus("loading");
+      setFetchStatus("loading...");
       const data = await fetch(`${PROXY}/tasks/filter?query=today%20%7C%20overdue`, {
         headers: { Authorization: `Bearer ${tk}` }
-      }).then(r=>{ if(!r.ok) throw new Error(r.status); return r.json(); });
+      }).then(async r=>{
+        const txt = await r.text();
+        if(!r.ok) throw new Error(`${r.status} ${txt.slice(0,200)}`);
+        return JSON.parse(txt);
+      });
       const results = data.results || data || [];
-      if(results.length===0){ setFetchStatus("empty"); return; }
+      if(results.length===0){ setFetchStatus("empty: Todoist에 today가 0개"); return; }
       const mapped = results.map(t=> ({ id: t.id, content: t.content, priority: t.priority||1, parent_id: t.parent_id||null }));
       setTasks(mapped);
       if(top3Ids.length===0){
         setTop3Ids(mapped.filter(t=>!t.parent_id).slice(0,2).map(t=>t.id));
       }
-      setFetchStatus(`success:${mapped.length}`);
+      setFetchStatus(`success:${mapped.length}개 로드됨`);
     } catch(e){
-      setFetchStatus(`error:${e.message}`);
+      setFetchStatus(`error:Load failed - ${e.message}`);
       console.error(e);
     }
   };
@@ -152,7 +159,7 @@ export default function App(){
   return (
     <div className={theme}>
       <div className="min-h-screen bg-zinc-50 dark:bg-black flex justify-center">
-        <div className="w-[430px] bg-white dark:bg-zinc-950 min-h-screen border-x border-zinc-200 dark:border-zinc-800 flex flex-col">
+        <div className="w- bg-white dark:bg-zinc-950 min-h-screen border-x border-zinc-200 dark:border-zinc-800 flex flex-col">
           <div className="sticky top-0 z-30 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 flex justify-between items-center">
             <span className="font-bold dark:text-white">Daily-Todo v1.14.1</span>
             <div className="flex gap-2">
@@ -163,23 +170,23 @@ export default function App(){
 
           {showToken && (
             <div className="mx-3 mt-3 p-3 rounded-xl border bg-yellow-50 dark:bg-zinc-900 dark:border-zinc-700 border-yellow-200">
-              <div className="text-[12px] font-bold dark:text-white mb-2">Todoist 토큰 (iPhone PWA는 Safari 저장소와 분리라 여기서 다시 설정해야 함)</div>
+              <div className="text- font-bold dark:text-white mb-2">Todoist 토큰 (iPhone PWA는 Safari 저장소와 분리라 여기서 다시 설정해야 함)</div>
               <div className="flex gap-2">
                 <input value={token} onChange={e=>setToken(e.target.value)} type="password" placeholder="API token" className="flex-1 px-3 py-2 rounded-lg border text-sm text-black"/>
                 <button onClick={()=>{ localStorage.setItem(TOKEN_KEY, token); setShowToken(false); loadTodoist(token); }} className="px-3 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-bold">저장 & 불러오기</button>
               </div>
-              <div className="text-[11px] mt-2 dark:text-zinc-300 text-zinc-600">상태: {fetchStatus} | 프록시: {PROXY} (필수, Cloudflare Worker)</div>
-              <div className="text-[10px] mt-1 text-zinc-500">필터: today | overdue 로 12개 가져옴 (v1.11 fix)</div>
+              <div className="text- mt-2 dark:text-zinc-300 text-zinc-600">상태: {fetchStatus} | 프록시: {PROXY} (필수, Cloudflare Worker)</div>
+              <div className="text- mt-1 text-zinc-500">필터: today | overdue 로 가져옴 / 배포: https://apoco211.github.io/Daily-Todo/</div>
             </div>
           )}
 
-          <div className="flex border-b border-zinc-200 dark:border-zinc-800 sticky top-[52px] z-20 bg-white dark:bg-zinc-950">
+          <div className="flex border-b border-zinc-200 dark:border-zinc-800 sticky top- z-20 bg-white dark:bg-zinc-950">
             <button onClick={()=>setActiveTab("today")} className={`flex-1 py-3 text-sm font-semibold ${activeTab==="today"?"text-black dark:text-white border-b-2 border-black dark:border-white":"text-zinc-400"}`}>오늘 할 일</button>
             <button onClick={()=>setActiveTab("history")} className={`flex-1 py-3 text-sm font-semibold ${activeTab==="history"?"text-black dark:text-white border-b-2 border-black dark:border-white":"text-zinc-400"}`}>날짜별 완료 ({logs.length})</button>
             <button onClick={()=>setActiveTab("build")} className={`flex-1 py-3 text-sm font-semibold ${activeTab==="build"?"text-black dark:text-white border-b-2 border-black dark:border-white":"text-zinc-400"}`}>빌드 히스토리</button>
           </div>
 
-          <div className="bg-blue-600 dark:bg-blue-700 p-3 sticky top-[97px] z-10">
+          <div className="bg-blue-600 dark:bg-blue-700 p-3 sticky top- z-10">
             <div className="flex gap-2">
               <input value={newContent} onChange={e=>setNewContent(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask()} placeholder="추가 업무 입력 + Enter" className="flex-1 px-3 py-2 rounded-lg text-sm outline-none text-black"/>
               <select value={newPriority} onChange={e=>setNewPriority(Number(e.target.value))} className="px-2 rounded-lg text-sm text-black"><option value={4}>P4</option><option value={3}>P3</option><option value={2}>P2</option><option value={1}>P1</option></select>
@@ -187,7 +194,7 @@ export default function App(){
             </div>
             <div className="flex gap-2 mt-2">
               <select value={newParent} onChange={e=>setNewParent(e.target.value)} className="flex-1 px-2 py-1 rounded text-xs text-black"><option value="">부모 없음 (최상위)</option>{rootTasks.map(r=><option key={r.id} value={r.id}>{r.content} 하위로</option>)}</select>
-              <span className="text-[11px] text-blue-100 py-1">Todoist에도 동시 생성 {fetchStatus.startsWith("success")?`· ${fetchStatus}`:""}</span>
+              <span className="text- text-blue-100 py-1">Todoist에도 동시 생성 {fetchStatus.startsWith("success")?`· ${fetchStatus}`:""}</span>
             </div>
           </div>
 
@@ -196,24 +203,24 @@ export default function App(){
               <div className="p-4 flex-1">
                 <h2 className="font-bold text-sm mb-2 dark:text-white">지금 하는 3개 <span className="font-normal text-zinc-400">하위 단독이면 부모 breadcrumb 표시</span></h2>
                 <SortableContext items={top3Ids} strategy={verticalListSortingStrategy}>
-                  <div id="top-container" className="min-h-[160px] p-2 rounded-xl bg-zinc-50 dark:bg-zinc-900 border-2 border-dashed border-zinc-200 dark:border-zinc-700 mb-6">
+                  <div id="top-container" className="min-h- p-2 rounded-xl bg-zinc-50 dark:bg-zinc-900 border-2 border-dashed border-zinc-200 dark:border-zinc-700 mb-6">
                     {topTasks.length===0 && <div className="text-center text-zinc-400 text-sm py-8">아래에서 드래그해서 올려보세요!</div>}
                     {topTasks.map(t=> {
                       const children = tasksWithMeta.filter(c=>c.parent_id===t.id);
                       const showBread =!!t.parent_id &&!top3Ids.includes(t.parent_id);
                       return (
                         <div key={t.id}>
-                          <div className="flex gap-2"><div className="flex-1"><SortableItem id={t.id} task={t} parentContent={t.parentContent} showBreadcrumb={showBread}/></div><button onClick={()=>completeTask(t.id)} className="h-[46px] px-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold">✓</button></div>
+                          <div className="flex gap-2"><div className="flex-1"><SortableItem id={t.id} task={t} parentContent={t.parentContent} showBreadcrumb={showBread}/></div><button onClick={()=>completeTask(t.id)} className="h- px-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold">✓</button></div>
                           {children.length>0 &&!t.parent_id && (
                             <div className="ml-6 border-l border-zinc-200 dark:border-zinc-700 pl-3 mb-3">
                               {children.map(c=> (
                                 <div key={c.id} className="flex gap-2 items-center py-1">
                                   <button onClick={()=>completeTask(c.id)} className="w-5 h-5 border border-zinc-300 dark:border-zinc-500 rounded flex items-center justify-center text-xs dark:text-zinc-200">□</button>
                                   <span className="text-sm flex-1 dark:text-zinc-100">{c.content}</span>
-                                  <span className="text-[11px] text-zinc-500 dark:text-zinc-400">하위만 완료</span>
+                                  <span className="text- text-zinc-500 dark:text-zinc-400">하위만 완료</span>
                                 </div>
                               ))}
-                              <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1">진행 0/{children.length} - 부모 Top3에서 자식 하나씩 처리하면 Todoist에는 자식만 close</div>
+                              <div className="text- text-zinc-500 dark:text-zinc-400 mt-1">진행 0/{children.length} - 부모 Top3에서 자식 하나씩 처리하면 Todoist에는 자식만 close</div>
                             </div>
                           )}
                         </div>
@@ -230,9 +237,9 @@ export default function App(){
                       const isExp = expanded.has(r.id);
                       return (
                         <div key={r.id}>
-                          <div className="flex gap-2"><div className="flex-1"><SortableItem id={r.id} task={r}/></div><button onClick={()=>setExpanded(s=>{const n=new Set(s); if(n.has(r.id)) n.delete(r.id); else n.add(r.id); return n;})} className="h-[46px] px-2 text-xs bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-100 text-zinc-700 rounded-xl border dark:border-zinc-600">{isExp?"▲":"▼"} {children.length}</button><button onClick={()=>completeTask(r.id)} className="h-[46px] px-3 bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 text-zinc-700 rounded-xl text-sm border dark:border-zinc-600">✓</button></div>
+                          <div className="flex gap-2"><div className="flex-1"><SortableItem id={r.id} task={r}/></div><button onClick={()=>setExpanded(s=>{const n=new Set(s); if(n.has(r.id)) n.delete(r.id); else n.add(r.id); return n;})} className="h- px-2 text-xs bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-100 text-zinc-700 rounded-xl border dark:border-zinc-600">{isExp?"▲":"▼"} {children.length}</button><button onClick={()=>completeTask(r.id)} className="h- px-3 bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 text-zinc-700 rounded-xl text-sm border dark:border-zinc-600">✓</button></div>
                           {isExp && children.map(c=> (
-                            <div key={c.id} className="ml-6 flex gap-2"><div className="flex-1"><SortableItem id={c.id} task={c} parentContent={r.content} showBreadcrumb={false}/></div><button onClick={()=>completeTask(c.id)} className="h-[46px] px-3 bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-100 text-zinc-700 rounded-xl text-xs border dark:border-zinc-600">✓ 하위</button></div>
+                            <div key={c.id} className="ml-6 flex gap-2"><div className="flex-1"><SortableItem id={c.id} task={c} parentContent={r.content} showBreadcrumb={false}/></div><button onClick={()=>completeTask(c.id)} className="h- px-3 bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-100 text-zinc-700 rounded-xl text-xs border dark:border-zinc-600">✓ 하위</button></div>
                           ))}
                         </div>
                       );
@@ -248,7 +255,7 @@ export default function App(){
             <div className="p-4">
               {groupedLogs.length===0 && <div className="text-sm text-zinc-400">아직 완료 없음</div>}
               {groupedLogs.map(([date, items])=> (
-                <div key={date} className="mb-6"><div className="font-semibold text-sm mb-2 dark:text-white">{date} · {items.length}개</div>{items.map((l,i)=>(<div key={i} className="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-900 border dark:border-zinc-800 mb-2 text-sm"><span className="text-green-600 mr-2">✓</span>{l.parentContent && <span className="text-[11px] text-zinc-500 dark:text-zinc-400">{l.parentContent} ▸ </span>}<span className="dark:text-zinc-200">{l.content}</span><span className="float-right text-xs text-zinc-400">{new Date(l.completed_at).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})}</span></div>))}</div>
+                <div key={date} className="mb-6"><div className="font-semibold text-sm mb-2 dark:text-white">{date} · {items.length}개</div>{items.map((l,i)=>(<div key={i} className="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-900 border dark:border-zinc-800 mb-2 text-sm"><span className="text-green-600 mr-2">✓</span>{l.parentContent && <span className="text- text-zinc-500 dark:text-zinc-400">{l.parentContent} ▸ </span>}<span className="dark:text-zinc-200">{l.content}</span><span className="float-right text-xs text-zinc-400">{new Date(l.completed_at).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})}</span></div>))}</div>
               ))}
             </div>
           )}
@@ -256,10 +263,10 @@ export default function App(){
           {activeTab==="build" && (
             <div className="p-4 text-sm">
               {[
-                {v:"v1.14.2", d:"2026-09-27", s:"현재", t:"Todoist API today|overdue + PWA 토큰 분리 fix + 야간모드 대비 fix (디자인 유지)"},
-                {v:"v1.14.1", d:"2026-09-27", s:"현재", t:"하위 breadcrumb + 다크토글 + 체크리스트 + 추가칸 통합"},
+                {v:"v1.14.3", d:"2026-09-27", s:"현재", t:"프록시 https://todoist-proxy.apoco211.workers.dev/ 고정 + Load failed 상세 에러 표시 (디자인 유지)"},
+                {v:"v1.14.2", d:"2026-09-27", s:"성공", t:"Todoist API today|overdue + PWA 토큰 분리 fix + 야간모드 대비 fix"},
+                {v:"v1.14.1", d:"2026-09-27", s:"성공", t:"하위 breadcrumb + 다크토글 + 체크리스트"},
                 {v:"v1.11", d:"2026-09-26", s:"성공", t:"today|overdue 필터로 12개 복구"},
-                {v:"v1.10", d:"2026-09-26", s:"버그수정", t:"rest/v2 410 Gone -> v1 마이그레이션"},
               ].map(b=>(
                 <div key={b.v} className="border-l-2 border-zinc-200 dark:border-zinc-700 pl-3 py-2 mb-2"><div className="flex gap-2"><span className="font-bold dark:text-white">{b.v}</span><span className="text-xs px-1.5 bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-200 rounded">{b.s}</span><span className="text-xs text-zinc-400">{b.d}</span></div><div className="text-zinc-600 dark:text-zinc-300 mt-1">{b.t}</div></div>
               ))}
