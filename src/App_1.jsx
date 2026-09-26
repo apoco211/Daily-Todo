@@ -193,23 +193,6 @@ export default function App() {
             <DragOverlay>{activeId ? <div className="p-3 rounded-xl bg-white dark:bg-zinc-900 shadow-xl border text-sm">{pool.find(p => p.id === activeId)?.content || active.find(a => a.id === activeId)?.content}</div> : null}</DragOverlay>
           </DndContext>
 
-          {/* 빌드 히스토리 아코디언 */}
-          <div className="border-t border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50">
-            <details className="group">
-              <summary className="flex items-center justify-between px-5 py-3 cursor-pointer list-none text-[12px] font-medium text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200">
-                <span className="flex items-center gap-2">🛠️ 빌드 히스토리 · v1.3</span>
-                <span className="transition-transform group-open:rotate-180">⌄</span>
-              </summary>
-              <div className="px-5 pb-4 space-y-2 text-[11px] text-zinc-600 dark:text-zinc-400 max-h-[240px] overflow-auto">
-                <div className="flex gap-2"><span className="shrink-0 px-1.5 py-0.5 rounded bg-zinc-900 text-white">v1.3</span><span className="text-zinc-400">2026-09-26</span><span>아코디언 빌드 히스토리 추가 · 주간/야간 토글 수정 · iOS 아이콘 180px 대응</span></div>
-                <div className="flex gap-2"><span className="shrink-0 px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700">v1.2</span><span className="text-zinc-400">2026-09-26</span><span>GitHub Pages base /Daily-Todo/ 수정 · npm ci → npm install 변경 · Pages enablement</span></div>
-                <div className="flex gap-2"><span className="shrink-0 px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700">v1.1</span><span className="text-zinc-400">2026-09-26</span><span>초기 배포 · PWA manifest · Todoist API 연동 · 무한리필 3개 큐 드래그앤드롭</span></div>
-                <div className="flex gap-2"><span className="shrink-0 px-1.5 py-0.5 rounded bg-zinc-200 dark:bg-zinc-700">v1.0</span><span className="text-zinc-400">2026-09-25</span><span>프로젝트 시작 · ∞3 로고 디자인 · Vite + React + Tailwind 셋업</span></div>
-                <div className="mt-3 p-2 rounded-lg bg-white dark:bg-zinc-800 border border-dashed text-[10px]">다음 업데이트: Supabase logs 연동, Todoist 완료 항목 자동 동기화, iOS 홈화면 아이콘 캐시 강제 갱신</div>
-              </div>
-            </details>
-          </div>
-
           <div className="sticky bottom-0 border-t border-zinc-200 dark:border-zinc-800 bg-white/90 dark:bg-zinc-950/90 backdrop-blur p-3 flex gap-2">
             <button className="flex-1 py-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-sm">📅 기록 보기</button>
             <button onClick={() => { if(confirm('logs 초기화?')) { setLogs([]); localStorage.removeItem('logs') } }} className="px-4 py-3 rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black text-sm">초기화</button>
