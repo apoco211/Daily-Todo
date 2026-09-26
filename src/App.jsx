@@ -56,6 +56,7 @@ export default function App() {
   const [custom, setCustom] = useState('')
   const [search, setSearch] = useState('')
   const [todoistToken, setTodoistToken] = useState(localStorage.getItem('todoist_token') || '')
+  const [proxyUrl, setProxyUrl] = useState(localStorage.getItem('todoist_proxy') || '')
   const [activeId, setActiveId] = useState(null)
   const [status, setStatus] = useState('API키를 입력하면 오늘 + 하위업무를 가져와요')
   const [error, setError] = useState('')
@@ -64,23 +65,35 @@ export default function App() {
   useEffect(() => { document.documentElement.classList.toggle('dark', theme === 'dark'); localStorage.setItem('theme', theme) }, [theme])
   useEffect(() => { localStorage.setItem('logs', JSON.stringify(logs)) }, [logs])
 
+  async function fetchWithProxy(url, token) {
+    const headers = { Authorization: `Bearer ${token}` }
+    try {
+      const res = await fetch(url, { headers, mode: 'cors' })
+      if (!res.ok) throw new Error(res.status)
+      return await res.json()
+    } catch (e) {
+      if (!proxyUrl) throw e
+      const pUrl = `${proxyUrl.replace(/\/$/, '')}?target=${encodeURIComponent(url)}`
+      const res2 = await fetch(pUrl, { headers, mode: 'cors' })
+      if (!res2.ok) throw new Error('proxy ' + res2.status)
+      return await res2.json()
+    }
+  }
+
   async function fetchToday() {
     if (!todoistToken) { setStatus('토큰 없음'); return }
     setStatus('불러오는 중... (하위업무 포함)'); setError('')
     try {
-      const res = await fetch('https://api.todoist.com/rest/v2/tasks?filter=today', { headers: { Authorization: `Bearer ${todoistToken}` } })
-      if (!res.ok) { const t = await res.text(); throw new Error(res.status + ' ' + t.slice(0,120)) }
-      const todayTasks = await res.json()
+      const todayTasks = await fetchWithProxy('https://api.todoist.com/rest/v2/tasks?filter=today', todoistToken)
       let allSubtasks = []
       if (todayTasks.length > 0) {
         const projectIds = [...new Set(todayTasks.map(t => t.project_id).filter(Boolean))]
         for (const pid of projectIds.slice(0,5)) {
-          const pr = await fetch(`https://api.todoist.com/rest/v2/tasks?project_id=${pid}`, { headers: { Authorization: `Bearer ${todoistToken}` } })
-          if (pr.ok) {
-            const pTasks = await pr.json()
+          try {
+            const pTasks = await fetchWithProxy(`https://api.todoist.com/rest/v2/tasks?project_id=${pid}`, todoistToken)
             const subs = pTasks.filter(t => t.parent_id && todayTasks.some(tt => String(tt.id) === String(t.parent_id)))
             allSubtasks.push(...subs)
-          }
+          } catch {}
         }
       }
       const combined = [...todayTasks,...allSubtasks]
@@ -120,7 +133,14 @@ export default function App() {
 
   async function completeTask(task) {
     if (todoistToken &&!String(task.id).startsWith('custom-')) {
-      try { await fetch(`https://api.todoist.com/rest/v2/tasks/${task.id}/close`, { method: 'POST', headers: { Authorization: `Bearer ${todoistToken}` } }) } catch {}
+      const url = `https://api.todoist.com/rest/v2/tasks/${task.id}/close`
+      try {
+        if (proxyUrl) {
+          await fetch(`${proxyUrl}?target=${encodeURIComponent(url)}`, { method: 'POST', headers: { Authorization: `Bearer ${todoistToken}` }, mode: 'cors' })
+        } else {
+          await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${todoistToken}` }, mode: 'cors' })
+        }
+      } catch {}
     }
     const entry = { id: Date.now(), date: new Date().toISOString().slice(0,10), title: (task.depth > 0? '└ ' : '') + task.content, source: 'todoist', completed_at: new Date().toISOString() }
     setLogs(prev => [entry,...prev]); setActive(prev => prev.filter(p => p.id!== task.id)); setPool(prev => prev.filter(p => p.id!== task.id && String(p.parent_id)!== String(task.id)))
@@ -141,7 +161,8 @@ export default function App() {
               <details open className="text-xs border rounded-xl p-3 bg-zinc-50 dark:bg-zinc-900">
                 <summary className="font-medium cursor-pointer">🔑 Todoist API · {status}</summary>
                 <div className="mt-3 space-y-2">
-                  <input value={todoistToken} onChange={e => { setTodoistToken(e.target.value); localStorage.setItem('todoist_token', e.target.value) }} placeholder="API token (todoist.com → 설정 → 연동 → 개발자)" className="w-full px-3 py-2.5 rounded-lg border bg-white dark:bg-zinc-950 text-xs" />
+                  <input value={todoistToken} onChange={e => { setTodoistToken(e.target.value); localStorage.setItem('todoist_token', e.target.value) }} placeholder="API token" className="w-full px-3 py-2.5 rounded-lg border bg-white dark:bg-zinc-950 text-xs" />
+                  <input value={proxyUrl} onChange={e => { setProxyUrl(e.target.value); localStorage.setItem('todoist_proxy', e.target.value) }} placeholder="프록시 URL (선택) https://xxx.workers.dev" className="w-full px-3 py-2 rounded-lg border bg-white dark:bg-zinc-950 text-" />
                   <div className="flex gap-2"><button onClick={fetchToday} className="flex-1 py-2 rounded-lg bg-zinc-900 dark:bg-white text-white dark:text-black text-xs">오늘 + 하위업무 불러오기</button><button onClick={() => setShowSubtasks(!showSubtasks)} className="px-3 py-2 rounded-lg bg-zinc-200 dark:bg-zinc-800 text-xs">{showSubtasks? '하위 숨기기' : '하위 보기'}</button></div>
                   {error && <div className="p-2 rounded bg-red-50 text-red-600 text- break-all">{error}</div>}
                   <div className="text- text-zinc-400">예시 데이터 없음 · 실제 Todoist 데이터만 표시. 토큰은 기기에만 저장.</div>
@@ -154,12 +175,9 @@ export default function App() {
                 <div id="pool-droppable" className="space-y-2 max-h- overflow-auto"><SortableContext items={filteredPool.map(a=>a.id)} strategy={verticalListSortingStrategy}>{filteredPool.map(t=>{ const childCount = pool.filter(p=> String(p.parent_id)===String(t.id)).length; return <SortableItem key={t.id} task={t} depth={t.depth} childCount={childCount} /> })}</SortableContext>{filteredPool.length===0 && <div className="text-center py-8 text-zinc-400 text-xs">오늘 할 일이 없거나 API키를 확인해보세요</div>}</div>
                 <div className="mt-2 text- text-zinc-400">└ 가 하위업무, 들여쓰기로 구분. Pool 안에서도 위아래 드래그로 순서 변경 가능.</div>
               </div>
-              <div className="p-3 rounded-2xl bg-zinc-50 dark:bg-zinc-900 border"><div className="flex gap-2"><input value={custom} onChange={e=>setCustom(e.target.value)} onKeyDown={e=>e.key==='Enter' && addCustom()} placeholder="직접 추가" className="flex-1 px-3 py-2.5 rounded-xl border bg-white dark:bg-zinc-950 text-sm outline-none" /><button onClick={addCustom} className="px-4 py-2.5 rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black text-sm font-medium">추가</button></div></div>
             </div>
             <DragOverlay>{activeId? <div className="p-3 rounded-xl bg-white shadow-xl border text-sm">{pool.find(p=>p.id===activeId)?.content || active.find(a=>a.id===activeId)?.content}</div> : null}</DragOverlay>
           </DndContext>
-          <div className="border-t bg-zinc-50 dark:bg-zinc-900/50"><details className="group"><summary className="flex justify-between px-5 py-3 cursor-pointer list-none text- font-medium text-zinc-500">🛠️ 빌드 히스토리 · v1.8 (전체복구) <span className="group-open:rotate-180 transition">⌄</span></summary><div className="px-5 pb-4 space-y-2 text- text-zinc-600 dark:text-zinc-400"><div className="flex gap-2"><span className="shrink-0 px-1.5 py-0.5 rounded bg-zinc-900 text-white">v1.8</span><span>2026-09-26</span><span>전체 복구: 예시제거 + 하위업무 트리 + safe-area 토글 fix + Pool 정렬 + 다크모드 + 아이콘</span></div><div>v1.7 - 예시 제거</div><div>v1.6 - 하위업무 포함 로드</div><div>v1.5 - Pool 위아래 이동 · 토글 위치 수정</div><div>v1.3 - 다크모드 · 아이콘 fix</div></div></details></div>
-          <div className="sticky bottom-0 border-t bg-white/90 dark:bg-zinc-950/90 backdrop-blur p-3 flex gap-2"><button className="flex-1 py-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 text-sm">📅 기록 보기</button><button onClick={() => { if(confirm('logs 초기화?')) { setLogs([]); localStorage.removeItem('logs') } }} className="px-4 py-3 rounded-xl bg-zinc-900 dark:bg-white text-white dark:text-black text-sm">초기화</button></div>
         </div>
       </div>
     </div>
