@@ -4,7 +4,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS } from "@dnd-kit/utilities"
 
 const PROXY = "https://todoist-proxy.apoco211.workers.dev"
-const VERSION = "v1.17.4"
+const VERSION = "v1.17.5"
 
 function getRootId(task, taskMap) {
   if (!task) return null
@@ -20,11 +20,14 @@ function getRootId(task, taskMap) {
 function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, expanded, onToggle, onMoveTop, onMoveDown, onComplete, onDelete, childrenList }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging? 0.5 : 1 }
-  let base = "rounded-lg p-2.5 flex flex-col gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
-  if (isTop) base = "rounded-lg p-2.5 flex flex-col gap-1 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700"
-  if (isCandidate) base = "rounded-lg p-2.5 flex flex-col gap-1 bg-amber-50/80 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40"
+
+  // v1.16.3 원본 크기 그대로, 색만 요청한 것만 진하게
+  let cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+  if (isTop) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-blue-100 dark:bg-blue-900/30 border-2 border-blue-300 dark:border-blue-600"
+  if (isCandidate) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-yellow-50 dark:bg-yellow-900/20 border-2 border-yellow-300 dark:border-yellow-600/60"
+
   return (
-    <div ref={setNodeRef} style={style} className={base}>
+    <div ref={setNodeRef} style={style} className={cardClass}>
       <div className="flex items-center gap-1.5">
         <button {...attributes} {...listeners} className="text-gray-300 dark:text-gray-600 cursor-grab text-[12px]">≡</button>
         <div className="flex-1 min-w-0">
@@ -33,23 +36,26 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           {task.priority>1 && <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${task.priority===4?'bg-red-500 text-white':task.priority===3?'bg-orange-400 text-white':'bg-blue-400 text-white'}`}>P{task.priority}</span>}
-          {hasChildren && <span className="text-[9px] px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-700 dark:text-gray-300">{childrenList?.length}</span>}
+          {hasChildren && <span className="text-[9px] px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-700 dark:text-gray-300">{childrenList?.length} 하위</span>}
           {!isTop? (<><button onClick={()=>onMoveTop(task.id)} className="w-6 h-6 bg-blue-500 text-white rounded-md text-[11px] font-bold">▲</button>{hasChildren && <button onClick={()=>onToggle(task.id)} className="w-6 h-6 bg-gray-100 dark:bg-gray-700 dark:text-gray-200 rounded-md text-[10px]">{expanded?'▲':'▼'}</button>}<button onClick={()=>onDelete(task.id)} className="w-6 h-6 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 rounded-md text-[10px]">✕</button></>) : (<><button onClick={()=>onComplete(task.id)} className="w-6 h-6 bg-black dark:bg-white text-white dark:text-black rounded-md text-[11px] font-bold">✓</button><button onClick={()=>onMoveDown(task.id)} className="w-6 h-6 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 rounded-md text-[10px]">▼</button></>)}
         </div>
       </div>
+
+      {/* 하위업무 - 풀에서 ▼ 누르면 표시 */}
       {!isTop && expanded && childrenList?.length>0 && (
-        <div className="ml-5 pl-2.5 border-l border-gray-200 dark:border-gray-700 flex flex-col gap-1">
+        <div className="ml-5 pl-2.5 border-l-2 border-gray-300 dark:border-gray-600 flex flex-col gap-1 mt-1">
           {childrenList.map(child=>(
             <div key={child.id} className="flex items-center justify-between py-1">
               <div className="min-w-0 flex-1"><div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">{task.content} ▸</div><div className="text-[12px] text-gray-800 dark:text-gray-200 truncate">{child.content}</div></div>
-              <div className="flex gap-0.5 ml-2"><button onClick={()=>onMoveTop(child.id)} className="w-5 h-5 bg-blue-500 text-white rounded text-[9px]">▲</button><button onClick={()=>onDelete(child.id)} className="w-5 h-5 bg-gray-100 dark:bg-gray-700 rounded text-[9px]">✕</button></div>
+              <div className="flex gap-0.5 ml-2"><button onClick={()=>onMoveTop(child.id)} className="w-5 h-5 bg-blue-500 text-white rounded text-[9px]">▲</button><button onClick={()=>onDelete(child.id)} className="w-5 h-5 bg-gray-100 dark:bg-gray-700 dark:text-white rounded text-[9px]">✕</button></div>
             </div>
           ))}
         </div>
       )}
+
       {isTop && childrenList?.length>0 && (
-        <div className="ml-4 pl-2.5 border-l border-blue-200 dark:border-blue-700 flex flex-col gap-0.5">
-          <div className="text-[9px] text-gray-500 dark:text-gray-400">{childrenList.length}개 하위</div>
+        <div className="ml-4 pl-2.5 border-l-2 border-blue-300 dark:border-blue-600 flex flex-col gap-0.5 mt-1">
+          <div className="text-[9px] text-blue-600 dark:text-blue-300">{childrenList.length}개 하위 포함 (1그룹)</div>
           {childrenList.map(ch=><div key={ch.id} className="text-[11px] text-gray-700 dark:text-gray-300 truncate">• {ch.content}</div>)}
         </div>
       )}
@@ -59,7 +65,7 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
 
 function TopDrop({ children }) {
   const { setNodeRef, isOver } = useDroppable({ id: "top-container" })
-  return <div ref={setNodeRef} className={`rounded-xl border-2 border-dashed p-2 min-h-[130px] ${isOver?'border-blue-400 bg-blue-50/30':'border-gray-300 dark:border-gray-600'}`}>{children}</div>
+  return <div ref={setNodeRef} className={`rounded-xl border-2 border-dashed p-2 min-h-[130px] ${isOver?'border-blue-400 bg-blue-50/30 dark:bg-blue-900/10':'border-gray-300 dark:border-gray-600'}`}>{children}</div>
 }
 
 export default function App() {
@@ -84,15 +90,18 @@ export default function App() {
   useEffect(()=>{ localStorage.setItem("dark", String(dark)); if(dark) document.documentElement.classList.add("dark"); else document.documentElement.classList.remove("dark") }, [dark])
   const getChildren = (parentId) => tasks.filter(t=>t.parent_id===parentId)
 
-  const fetchTasks = async () => {
-    if(!token) { alert("토큰 먼저 저장해줘"); return }
+  const fetchTasks = async (tok = token) => {
+    const useToken = tok || token
+    if(!useToken){ alert("토큰 먼저 저장"); return }
     try{
-      const res = await fetch(`${PROXY}/api/v1/tasks/filter?query=today%20|%20overdue`, { headers: { Authorization: `Bearer ${token}` } })
+      const res = await fetch(`${PROXY}/api/v1/tasks/filter?query=today%20|%20overdue`, { headers: { Authorization: `Bearer ${useToken}` } })
       const data = await res.json()
       const todays = data.results || data.tasks || data || []
+
+      // 하위업무 100% 불러오기 - 핵심
       const childResults = await Promise.all(todays.map(async (t)=>{
         try{
-          const r = await fetch(`${PROXY}/api/v1/tasks?parent_id=${t.id}`, { headers: { Authorization: `Bearer ${token}` } })
+          const r = await fetch(`${PROXY}/api/v1/tasks?parent_id=${t.id}`, { headers: { Authorization: `Bearer ${useToken}` } })
           const d = await r.json()
           return d.results || d.tasks || (Array.isArray(d)? d : [])
         }catch{ return [] }
@@ -114,7 +123,7 @@ export default function App() {
     }catch{ setCompletedFromTodoist([]) }
   }
 
-  useEffect(()=>{ if(token) fetchTasks() }, [token])
+  useEffect(()=>{ if(token) fetchTasks(token) }, [])
   useEffect(()=>{ if(activeTab==="history") fetchCompleted() }, [activeTab])
 
   const getTop3GroupCount = () => { const s=new Set(); top3Ids.forEach(id=>{ const t=taskMap[id]; if(t) s.add(getRootId(t, taskMap)) }); return s.size }
@@ -193,20 +202,23 @@ export default function App() {
           <div className="font-bold text-[14px] text-gray-900 dark:text-white">{VERSION}</div>
           <div className="flex gap-1.5"><button onClick={()=>setShowToken(!showToken)} className="w-7 h-7 rounded-full bg-gray-100 dark:bg-gray-800 dark:text-white text-[12px]">⚙️</button><button onClick={()=>setDark(!dark)} className="w-7 h-7 rounded-full bg-gray-100 dark:bg-gray-800 dark:text-white text-[12px]">{dark?'☀️':'🌙'}</button></div>
         </header>
+
+        {/* 토큰 - 가려짐 + 저장&불러오기 복구 */}
         {showToken && (
           <div className="p-2.5 bg-gray-50 dark:bg-gray-800 border-b dark:border-gray-700 flex flex-col gap-2">
             <div className="flex gap-1.5">
               <input type="password" value={tmpToken} onChange={e=>setTmpToken(e.target.value)} placeholder="Todoist API 토큰 (가려짐)" className="flex-1 px-2.5 py-1.5 rounded-lg border text-[11px] dark:bg-gray-700 dark:text-white dark:border-gray-600" />
-              <button onClick={async ()=>{ localStorage.setItem("todoist_token", tmpToken); setToken(tmpToken); setShowToken(false); setTimeout(()=>fetchTasks(), 200) }} className="bg-black dark:bg-white text-white dark:text-black px-3 rounded-lg text-[11px] font-bold">저장&불러오기</button>
+              <button onClick={async ()=>{ localStorage.setItem("todoist_token", tmpToken); setToken(tmpToken); setShowToken(false); setTimeout(()=>fetchTasks(tmpToken), 200) }} className="bg-black dark:bg-white text-white dark:text-black px-3 rounded-lg text-[11px] font-bold">저장&불러오기</button>
             </div>
             <div className="flex gap-1.5">
               <button onClick={()=>fetchTasks()} className="flex-1 bg-blue-500 text-white py-1.5 rounded-lg text-[11px]">🔄 다시 불러오기</button>
               <button onClick={()=>{ setTmpToken(""); localStorage.removeItem("todoist_token"); setToken(""); setTasks([]) }} className="flex-1 bg-gray-200 dark:bg-gray-700 dark:text-white py-1.5 rounded-lg text-[11px]">토큰 삭제</button>
             </div>
-            <div className="text-[10px] text-gray-400 dark:text-gray-500">* 토큰은 브라우저에만 저장, 서버 전송 안 함. 저장하면 바로 목록 불러옵니다.</div>
           </div>
         )}
+
         <div className="flex border-b dark:border-gray-800">{["today","history","changelog"].map(tab=><button key={tab} onClick={()=>setActiveTab(tab)} className={`flex-1 py-2 text-[12px] ${activeTab===tab?'border-b-2 border-black dark:border-white font-bold text-gray-900 dark:text-white':'text-gray-500 dark:text-gray-400'}`}>{tab==="today"?"오늘 할 일":tab==="history"?"날짜별 완료":"히스토리"}</button>)}</div>
+
         {activeTab==="today" && <div className="flex-1 overflow-auto p-2 flex flex-col gap-3">
           <div className="flex gap-1.5">
             <input value={newContent} onChange={e=>setNewContent(e.target.value)} placeholder="추가업무" className="flex-1 px-2.5 py-2 rounded-lg border bg-blue-50/50 dark:bg-gray-800 border-blue-100 dark:border-gray-700 text-[13px] text-gray-900 dark:text-white placeholder-gray-400" />
@@ -215,12 +227,14 @@ export default function App() {
             <button onClick={addTask} className="bg-blue-500 text-white px-2.5 rounded-lg text-[13px]">+</button>
           </div>
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <div className="flex flex-col gap-1.5"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">🎯 Top3 ({getTop3GroupCount()}/3)</div><TopDrop>{top3Ids.length===0? <div className="text-center text-gray-400 dark:text-gray-500 text-[12px] py-6">▲로 올리기</div> : <SortableContext items={top3Ids} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{top3Ids.map(id=>{ const t=taskMap[id]; if(!t) return null; const children=getChildren(id); return <SortableItem key={id} task={t} isTop={true} hasChildren={children.length>0} childrenList={children} onComplete={completeTask} onMoveDown={moveDown} onDelete={deleteLocal} /> })}</div></SortableContext>}</TopDrop></div>
-            <div className="flex flex-col gap-1.5 mt-1"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">📋 오늘 풀 ({poolTasks.length})</div><SortableContext items={poolTasks.map(t=>t.id)} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{poolTasks.map((t, idx)=>{ const children=getChildren(t.id); const isCandidate=idx<3; const expanded=expandedIds.has(t.id); return <SortableItem key={t.id} task={t} isCandidate={isCandidate} hasChildren={children.length>0} expanded={expanded} childrenList={children} onToggle={(pid)=>setExpandedIds(prev=>{ const n=new Set(prev); if(n.has(pid)) n.delete(pid); else n.add(pid); return n })} onMoveTop={moveToTop} onDelete={deleteLocal} /> })}</div></SortableContext></div>
+            <div className="flex flex-col gap-1.5"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">🎯 Top3 ({getTop3GroupCount()}/3) <span className="text-[10px] font-normal text-blue-600 dark:text-blue-300 ml-1">파란색</span></div><TopDrop>{top3Ids.length===0? <div className="text-center text-gray-400 dark:text-gray-500 text-[12px] py-6">▲로 올리기</div> : <SortableContext items={top3Ids} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{top3Ids.map(id=>{ const t=taskMap[id]; if(!t) return null; const children=getChildren(id); return <SortableItem key={id} task={t} isTop={true} hasChildren={children.length>0} childrenList={children} onComplete={completeTask} onMoveDown={moveDown} onDelete={deleteLocal} /> })}</div></SortableContext>}</TopDrop></div>
+            <div className="flex flex-col gap-1.5 mt-1"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">📋 오늘 풀 ({poolTasks.length}) <span className="text-[10px] font-normal text-amber-600 dark:text-amber-300 ml-1">상위3 노란색</span></div><SortableContext items={poolTasks.map(t=>t.id)} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{poolTasks.map((t, idx)=>{ const children=getChildren(t.id); const isCandidate=idx<3; const expanded=expandedIds.has(t.id); return <SortableItem key={t.id} task={t} isCandidate={isCandidate} hasChildren={children.length>0} expanded={expanded} childrenList={children} onToggle={(pid)=>setExpandedIds(prev=>{ const n=new Set(prev); if(n.has(pid)) n.delete(pid); else n.add(pid); return n })} onMoveTop={moveToTop} onDelete={deleteLocal} /> })}</div></SortableContext></div>
           </DndContext>
         </div>}
+
         {activeTab==="history" && <div className="flex-1 overflow-auto p-2">{groupedLogs.map(([date, items])=><div key={date} className="border dark:border-gray-700 rounded-lg p-2 bg-gray-50 dark:bg-gray-800/50 mb-2"><div className="font-bold text-[11px] mb-1 text-gray-900 dark:text-white">{date} ({items.length})</div><div className="flex flex-col gap-1">{items.map(it=><div key={it.id+"_"+it.completedAt} className="text-[12px] bg-white dark:bg-gray-900 rounded p-1.5 border dark:border-gray-700 flex justify-between text-gray-900 dark:text-gray-100"><span className="truncate">{it.content}</span>{it.fromTodoist && <span className="text-[8px] bg-blue-100 text-blue-700 px-1 rounded ml-1">T</span>}</div>)}</div></div>)}</div>}
-        {activeTab==="changelog" && <div className="p-2 text-[11px] text-gray-700 dark:text-gray-300">v1.17.4 토큰 가림+저장&불러오기 복구, 하위업무 100% 표시, 1주일치, 색 Top3 파란/풀Top3 노란, 디자인 v1.16.3 원본 유지</div>}
+
+        {activeTab==="changelog" && <div className="p-2 text-[11px] text-gray-700 dark:text-gray-300">v1.17.5 - 색 Top3 파란 bg-blue-100 border-blue-300 / 풀Top3 노란 bg-yellow-50 border-yellow-300 + 하위업무 parent_id 별도 fetch 100% + 토큰 가림+저장&불러오기 + 다크모드 글씨 수정 + 디자인 v1.16.3 원본 작은 카드 유지</div>}
       </div>
     </div>
   )
