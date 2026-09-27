@@ -1,302 +1,296 @@
-import { useState, useEffect, useMemo } from "react";
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragOverlay, useDroppable } from "@dnd-kit/core";
-import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
-const PROXY = "https://todoist-proxy.apoco211.workers.dev";
-const TOKEN_KEY = "todoist_token";
-const REPO = "apoco211/Daily-Todo";
+import { useState, useEffect, useMemo } from "react"
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, useDroppable } from "@dnd-kit/core"
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 
-function SortableItem({ id, task, parentContent, showBreadcrumb }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging? 0.5 : 1 };
-  return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="flex gap-2 p-3 rounded-xl border mb-2 bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-sm cursor-grab">
-      <span className="text-zinc-400">≡</span>
-      <div className="flex-1">
-        {showBreadcrumb && parentContent && <div className="text-[11px] text-zinc-500 dark:text-zinc-300 mb-0.5">{parentContent} ▸</div>}
-        <div className="text-sm text-zinc-900 dark:text-zinc-100">{task.content}</div>
-        {task.childrenCount? <span className="text-[10px] bg-zinc-100 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-200 px-1.5 py-0.5 rounded">{task.childrenCount}개</span> : null}
-      </div>
-      <span className={`text-xs px-1.5 py-0.5 rounded h-fit ${task.priority===4?"bg-red-100 text-red-600": task.priority===3?"bg-orange-100 text-orange-600":"bg-zinc-100 text-zinc-500"}`}>P{task.priority}</span>
-    </div>
-  );
+const PROXY = "https://todoist-proxy.apoco211.workers.dev"
+const VERSION = "v1.17"
+
+function getRootId(task, taskMap) {
+  if (!task) return null
+  let cur = task
+  let visited = new Set()
+  while (cur?.parent_id && taskMap[cur.parent_id] &&!visited.has(cur.parent_id)) {
+    visited.add(cur.id)
+    cur = taskMap[cur.parent_id]
+  }
+  return cur?.id || task.id
 }
 
-export default function App(){
-  const [theme,setTheme]=useState(()=>localStorage.getItem("theme")||"light");
-  const [tasks,setTasks]=useState([]);
-  const [top3Ids,setTop3Ids]=useState(()=>JSON.parse(localStorage.getItem("top3_ids")||"[]"));
-  const [logs,setLogs]=useState(()=>JSON.parse(localStorage.getItem("completed_logs")||"[]"));
-  const [activeTab,setActiveTab]=useState("today");
-  const [activeId,setActiveId]=useState(null);
-  const [expanded,setExpanded]=useState(new Set([]));
-  const [newContent,setNewContent]=useState("");
-  const [newPriority,setNewPriority]=useState(3);
-  const [newParent,setNewParent]=useState("");
-  const [token,setToken]=useState(()=>localStorage.getItem(TOKEN_KEY)||"");
-  const [showToken,setShowToken]=useState(false);
-  const [fetchStatus,setFetchStatus]=useState("idle");
-  const [changelog,setChangelog]=useState([]);
-  const [commits,setCommits]=useState([]);
-  const [buildStatus,setBuildStatus]=useState("idle");
-  const sensors=useSensors(useSensor(PointerSensor,{activationConstraint:{distance:8}}));
-  const {setNodeRef:setTopRef,isOver:isTopOver}=useDroppable({id:"top-container"});
-  const {setNodeRef:setPoolRef,isOver:isPoolOver}=useDroppable({id:"pool-container"});
-
-  useEffect(()=>{document.documentElement.classList.toggle("dark",theme==="dark");localStorage.setItem("theme",theme);},[theme]);
-  useEffect(()=>localStorage.setItem("top3_ids",JSON.stringify(top3Ids)),[top3Ids]);
-  useEffect(()=>localStorage.setItem("completed_logs",JSON.stringify(logs)),[logs]);
-
-  useEffect(()=>{
-    if(activeTab!=="build")return;
-    const base=import.meta.env.BASE_URL||"/Daily-Todo/";
-    setBuildStatus("loading changelog.json");
-    fetch(`${base}changelog.json?ts=${Date.now()}`).then(async r=>{if(!r.ok)throw new Error("no changelog");return r.json();}).then(data=>{setChangelog(data);setBuildStatus(`changelog:${data.length}개`);}).catch(()=>{
-      setBuildStatus("fallback: commits");
-      fetch(`https://api.github.com/repos/${REPO}/commits?per_page=30`).then(async r=>{const t=await r.text();if(!r.ok)throw new Error(t.slice(0,150));return JSON.parse(t);}).then(d=>{setCommits(d);setBuildStatus(`commits:${d.length}개`);}).catch(e=>setBuildStatus(`error:${e.message}`));
-    });
-  },[activeTab]);
-
-  const fetchWithProxy=async(endpoint,options={})=>{
-    const res=await fetch(`${PROXY}${endpoint}`,{...options,headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json",...(options.headers||{})}});
-    if(!res.ok){const txt=await res.text();throw new Error(`HTTP ${res.status} ${txt.slice(0,200)}`);}return res.json();
-  };
-
-  const loadTodoist=async(tk=token)=>{
-    if(!tk){setFetchStatus("no-token");return;}
-    try{
-      setFetchStatus("loading...");
-      const data=await fetch(`${PROXY}/tasks/filter?query=today%20%7C%20overdue`,{headers:{Authorization:`Bearer ${tk}`}}).then(async r=>{const txt=await r.text();if(!r.ok)throw new Error(`${r.status} ${txt.slice(0,300)}`);return JSON.parse(txt);});
-      const results=data.results||[];
-      const mapped=results.map(t=>({id:t.id,content:t.content,priority:t.priority||1,parent_id:t.parent_id||null}));
-      setTasks(mapped);
-      setFetchStatus(`success:${mapped.length}개`);
-    }catch(e){setFetchStatus(`error:Load failed - ${e.message}`);}
-  };
-
-  useEffect(()=>{
-    if(tasks.length===0&&!token){
-      const mock=[{id:"1",content:"주간 피드백 정리",priority:4,parent_id:null},{id:"1-1",content:"이메일 발송",priority:3,parent_id:"1"},{id:"1-2",content:"데이터 정리",priority:2,parent_id:"1"},{id:"2",content:"고객사 미팅 준비",priority:4,parent_id:null},{id:"2-1",content:"이메일 발송",priority:3,parent_id:"2"},{id:"3",content:"힐링코드 5분",priority:3,parent_id:null},{id:"4",content:"운동 30분",priority:2,parent_id:null},{id:"5",content:"아파트 관리비 내기",priority:1,parent_id:null}];
-      setTasks(mock);
-    }
-    if(token){loadTodoist(token);}
-  },[]);
-
-  const taskMap=useMemo(()=>Object.fromEntries(tasks.map(t=>[t.id,t])),[tasks]);
-  const getRootId=(task)=>{
-    if(!task)return null;
-    let cur=task;
-    const visited=new Set();
-    while(cur&&cur.parent_id&&taskMap[cur.parent_id]&&!visited.has(cur.parent_id)){
-      visited.add(cur.id);
-      cur=taskMap[cur.parent_id];
-    }
-    return cur?cur.id:task.id;
-  };
-  const tasksWithMeta=useMemo(()=>tasks.map(t=>({...t,rootId:getRootId(t),parentContent:t.parent_id?taskMap[t.parent_id]?.content:null,childrenCount:tasks.filter(c=>c.parent_id===t.id).length})),[tasks,taskMap]);
-
-  useEffect(()=>{
-    if(tasks.length===0)return;
-    setTop3Ids(prev=>{
-      const existing=prev.filter(id=>taskMap[id]);
-      const seen=new Set();
-      const deduped=[];
-      for(const id of existing){
-        const t=taskMap[id];
-        if(!t)continue;
-        const root=getRootId(t);
-        if(seen.has(root))continue;
-        seen.add(root);
-        deduped.push(id);
-      }
-      return deduped.slice(0,3);
-    });
-  },[tasks]);
-
-  const topTasks=useMemo(()=>top3Ids.map(id=>tasksWithMeta.find(t=>t.id===id)).filter(Boolean),[tasksWithMeta,top3Ids]);
-  const rootTasks=useMemo(()=>tasksWithMeta.filter(t=>!t.parent_id),[tasksWithMeta]);
-  const poolRoots=useMemo(()=>{
-    const topRoots=new Set(top3Ids.map(id=>{const t=taskMap[id];return t?getRootId(t):null;}).filter(Boolean));
-    return rootTasks.filter(t=>!topRoots.has(t.id));
-  },[rootTasks,top3Ids,taskMap]);
-
-  const getTop3GroupCount=()=>{
-    const groups=new Set(top3Ids.map(id=>{const t=taskMap[id];return t?getRootId(t):id;}));
-    return groups.size;
-  };
-
-  const moveToTop=(id)=>{
-    const task=taskMap[id];
-    if(!task)return;
-    const root=getRootId(task);
-    const existingGroups=new Set(top3Ids.map(tid=>{const tt=taskMap[tid];return tt?getRootId(tt):tid;}));
-    if(existingGroups.has(root))return;
-    if(getTop3GroupCount()>=3){alert("Top3는 최대 3개! (부모+하위 포함 1그룹)");return;}
-    setTop3Ids(p=>[...p,id]);
-  };
-
-  const handleDragEnd=(e)=>{
-    const {active, over}=e;
-    setActiveId(null);
-    if(!active) return;
-    const aId=active.id;
-    const aTask=taskMap[aId];
-    if(!aTask) return;
-    const aRoot=getRootId(aTask);
-    const overId=over?.id;
-    const overTop=overId==="top-container" || (overId && top3Ids.includes(overId)) || isTopOver;
-    const overPool=overId==="pool-container" || isPoolOver || poolRoots.find(t=>t.id===overId);
-    const existingGroups=new Set(top3Ids.map(tid=>{const tt=taskMap[tid];return tt?getRootId(tt):tid;}));
-    const inTop=top3Ids.includes(aId);
-
-    // FIX: 풀 → 풀 순서 고정 (제자리로 돌아가던 버그 수정)
-    if(!inTop && overPool){
-      const overIsPool=poolRoots.find(t=>t.id===overId);
-      if(overId==="pool-container" ||!overIsPool) return;
-      if(aId!==overId){
-        const oldIndex=tasks.findIndex(t=>t.id===aId);
-        const newIndex=tasks.findIndex(t=>t.id===overId);
-        if(oldIndex!==-1 && newIndex!==-1){
-          const isParent=!aTask.parent_id;
-          if(isParent){
-            const block=[aId,...tasks.filter(t=>t.parent_id===aId).map(t=>t.id)];
-            let newTasks=tasks.filter(t=>!block.includes(t.id));
-            const targetIdx=newTasks.findIndex(t=>t.id===overId);
-            if(targetIdx!==-1){
-              const blockObjs=block.map(bid=>tasks.find(t=>t.id===bid)).filter(Boolean);
-              newTasks.splice(targetIdx, 0,...blockObjs);
-              setTasks(newTasks);
-            }
-          }else{
-            setTasks(arrayMove(tasks, oldIndex, newIndex));
-          }
-        }
-      }
-      return;
-    }
-
-    if(!inTop && overTop){
-      if(existingGroups.has(aRoot)) return;
-      if(getTop3GroupCount()>=3) return;
-      setTop3Ids(p=> p.includes(aId)? p : [...p, aId]);
-      return;
-    }
-    if(inTop && overPool){
-      setTop3Ids(p=>p.filter(x=>x!==aId));
-      return;
-    }
-    if(inTop && overTop && overId && top3Ids.includes(overId)){
-      const oi=top3Ids.indexOf(aId), ni=top3Ids.indexOf(overId);
-      if(oi!==-1 && ni!==-1) setTop3Ids(arrayMove(top3Ids, oi, ni));
-      return;
-    }
-  };
-
-  const completeTask=async(id)=>{
-    const t=taskMap[id]; if(!t) return;
-    if(token){try{await fetchWithProxy(`/tasks/${id}/close`,{method:"POST"});}catch(e){}}
-    const children=tasks.filter(c=>c.parent_id===id);
-    const logsToAdd=[{id,content:t.content,parentContent:t.parent_id?taskMap[t.parent_id]?.content:null,completed_at:new Date().toISOString(),dateKey:new Date().toISOString().slice(0,10)}];
-    if(children.length>0 &&!t.parent_id){
-      children.forEach(ch=>{
-        logsToAdd.push({id:ch.id,content:ch.content,parentContent:t.content,completed_at:new Date().toISOString(),dateKey:new Date().toISOString().slice(0,10)});
-        if(token){fetchWithProxy(`/tasks/${ch.id}/close`,{method:"POST"}).catch(()=>{});}
-      });
-    }
-    setLogs(p=>[...logsToAdd,...p]);
-    setTasks(p=>p.filter(x=>x.id!==id && x.parent_id!==id));
-    setTop3Ids(p=>p.filter(x=>{if(x===id) return false; if(children.some(c=>c.id===x)) return false; return true;}));
-  };
-
-  const deleteLocal=(id)=>{
-    const t=taskMap[id];
-    const isParent=t &&!t.parent_id;
-    setTasks(p=>p.filter(x=>{if(x.id===id) return false; if(isParent && x.parent_id===id) return false; return true;}));
-    setTop3Ids(p=>p.filter(x=>{if(x===id) return false; if(isParent && taskMap[x]?.parent_id===id) return false; return true;}));
-  };
-
-  const addTask=async()=>{
-    if(!newContent.trim()) return;
-    const newId=Date.now().toString();
-    const nt={id:newId,content:newContent.trim(),priority:newPriority,parent_id:newParent||null};
-    if(token){
-      try{
-        const created=await fetchWithProxy(`/tasks`,{method:"POST",body:JSON.stringify({content:nt.content,priority:nt.priority,parent_id:nt.parent_id||undefined,due_string:"today"})});
-        nt.id=created.id||newId;
-      }catch(e){}
-    }
-    setTasks(p=>[...p,nt]);
-    setNewContent("");
-    setNewParent("");
-  };
-
-  const groupedLogs=useMemo(()=>{
-    const g={};
-    logs.forEach(l=>{if(!g[l.dateKey]) g[l.dateKey]=[]; g[l.dateKey].push(l);});
-    return Object.entries(g).sort((a,b)=> b[0].localeCompare(a[0]));
-  },[logs]);
+function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, expanded, onToggle, onMoveTop, onMoveDown, onComplete, onDelete, childrenList }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging? 0.5 : 1 }
+  const base = "rounded-xl p-3 flex flex-col gap-2 transition-all"
+  let colorClass = "bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+  if (isTop) colorClass = "bg-blue-50 dark:bg-blue-900/30 border-2 border-blue-300 dark:border-blue-600 shadow-md ring-1 ring-blue-200 dark:ring-blue-800"
+  else if (isCandidate) colorClass = "bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 shadow-sm"
 
   return (
-    <div className={theme}>
-      <div className="min-h-screen bg-zinc-50 dark:bg-black flex justify-center">
-        <div className="w-[430px] bg-white dark:bg-zinc-950 min-h-screen border-x border-zinc-200 dark:border-zinc-800 flex flex-col">
-          <div className="sticky top-0 z-30 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 flex justify-between items-center" style={{paddingTop:'calc(12px + env(safe-area-inset-top))'}}>
-            <span className="font-bold dark:text-white">Daily-Todo v1.16.3</span>
-            <div className="flex gap-2">
-              <button onClick={()=>setShowToken(!showToken)} className="w-9 h-9 rounded-full bg-zinc-100 dark:bg-zinc-800 dark:text-white flex items-center justify-center text-sm">⚙️</button>
-              <button onClick={()=>setTheme(theme==="light"?"dark":"light")} className="w-9 h-9 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">{theme==="light"?"🌙":"☀️"}</button>
-            </div>
+    <div ref={setNodeRef} style={style} className={`${base} ${colorClass} relative`}>
+      {isCandidate && <span className="absolute -top-2 -right-2 text-[10px] bg-yellow-400 text-yellow-900 px-2 py-0.5 rounded-full font-bold shadow">다음 후보</span>}
+      <div className="flex items-start gap-2">
+        <button {...attributes} {...listeners} className="mt-1 text-gray-400 cursor-grab select-none">≡</button>
+        <div className="flex-1 min-w-0">
+          {parentContent && <div className="text-[11px] text-gray-500 dark:text-gray-400 mb-0.5 truncate">{parentContent} ▸</div>}
+          <div className="text-[14px] leading-snug text-gray-900 dark:text-gray-100 break-words">{task.content}</div>
+          <div className="flex gap-1 mt-1 flex-wrap">
+            {task.priority >1 && <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${task.priority===4? 'bg-red-500 text-white' : task.priority===3? 'bg-orange-400 text-white' : 'bg-blue-400 text-white'}`}>P{task.priority}</span>}
+            {hasChildren && <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700">{childrenList?.length || 0} 하위</span>}
           </div>
-          {showToken&&(<div className="mx-3 mt-3 p-3 rounded-xl border bg-yellow-50 dark:bg-zinc-900 dark:border-zinc-700 border-yellow-200"><div className="text-[12px] font-bold dark:text-white mb-2">Todoist 토큰</div><div className="flex gap-2"><input value={token} onChange={e=>setToken(e.target.value)} type="password" placeholder="API token" className="flex-1 px-3 py-2 rounded-lg border text-sm text-black"/><button onClick={()=>{localStorage.setItem(TOKEN_KEY,token);setShowToken(false);loadTodoist(token);}} className="px-3 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-bold">저장 & 불러오기</button></div><div className="text-[11px] mt-2 dark:text-zinc-300 text-zinc-600">상태: {fetchStatus} | 그룹 {getTop3GroupCount()}/3</div></div>)}
-          <div className="flex border-b border-zinc-200 dark:border-zinc-800 sticky top-[52px] z-20 bg-white dark:bg-zinc-950">
-            <button onClick={()=>setActiveTab("today")} className={`flex-1 py-3 text-sm font-semibold ${activeTab==="today"?"text-black dark:text-white border-b-2 border-black dark:border-white":"text-zinc-400"}`}>오늘 할 일</button>
-            <button onClick={()=>setActiveTab("history")} className={`flex-1 py-3 text-sm font-semibold ${activeTab==="history"?"text-black dark:text-white border-b-2 border-black dark:border-white":"text-zinc-400"}`}>날짜별 완료 ({logs.length})</button>
-            <button onClick={()=>setActiveTab("build")} className={`flex-1 py-3 text-sm font-semibold ${activeTab==="build"?"text-black dark:text-white border-b-2 border-black dark:border-white":"text-zinc-400"}`}>빌드 히스토리</button>
-          </div>
-          <div className="bg-blue-600 dark:bg-blue-700 p-3 sticky top-[97px] z-10">
-            <div className="flex gap-2">
-              <input value={newContent} onChange={e=>setNewContent(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask()} placeholder="추가 업무 입력 + Enter" className="flex-1 px-3 py-2 rounded-lg text-sm outline-none text-black"/>
-              <select value={newPriority} onChange={e=>setNewPriority(Number(e.target.value))} className="px-2 rounded-lg text-sm text-black"><option value={4}>P4</option><option value={3}>P3</option><option value={2}>P2</option><option value={1}>P1</option></select>
-              <button onClick={addTask} className="px-3 bg-black text-white rounded-lg text-sm font-bold">추가</button>
-            </div>
-            <div className="flex gap-2 mt-2">
-              <select value={newParent} onChange={e=>setNewParent(e.target.value)} className="flex-1 px-2 py-1 rounded text-xs text-black"><option value="">부모 없음 (최상위)</option>{rootTasks.map(r=><option key={r.id} value={r.id}>{r.content} 하위로</option>)}</select>
-              <span className="text-[11px] text-blue-100 py-1">{fetchStatus}</span>
-            </div>
-          </div>
-          {activeTab==="today"&&(
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={e=>setActiveId(e.active.id)} onDragEnd={handleDragEnd}>
-              <div className="p-4 flex-1">
-                <h2 className="font-bold text-sm mb-2 dark:text-white">지금 하는 3개 <span className="font-normal text-zinc-400">✓=완료 / 부모+하위=1개</span></h2>
-                <SortableContext items={top3Ids} strategy={verticalListSortingStrategy}>
-                  <div ref={setTopRef} id="top-container" className={`min-h-[160px] p-2 rounded-xl border-2 border-dashed mb-6 ${isTopOver?"bg-blue-50 dark:bg-blue-950 border-blue-400":"bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700"}`}>
-                    {topTasks.length===0&&<div className="text-center text-zinc-400 text-sm py-8">아래 ▲로 올려보세요! (부모+하위 1그룹)</div>}
-                    {topTasks.map(t=>{
-                      const isParentInTop=!t.parent_id;
-                      const children=isParentInTop?tasksWithMeta.filter(c=>c.parent_id===t.id):[];
-                      const isChildAlone=!!t.parent_id;
-                      return (<div key={t.id}><div className="flex gap-2"><div className="flex-1"><SortableItem id={t.id} task={t} parentContent={t.parentContent} showBreadcrumb={isChildAlone}/></div><button onClick={()=>completeTask(t.id)} className="h-[46px] px-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold">✓</button><button onClick={()=>deleteLocal(t.id)} className="h-[46px] px-2 bg-zinc-200 dark:bg-zinc-800 dark:text-white rounded-xl text-xs">✕</button></div>{isParentInTop&&children.length>0&&(<div className="ml-6 border-l-2 border-blue-200 dark:border-blue-800 pl-3 mb-3 space-y-1"><div className="text-[10px] text-blue-600 dark:text-blue-300 font-semibold">{children.length}개 하위 포함 (1그룹)</div>{children.map(c=>(<div key={c.id} className="flex gap-2 items-center py-1"><button onClick={()=>completeTask(c.id)} className="w-5 h-5 border rounded flex items-center justify-center text-xs dark:text-zinc-200">□</button><span className="text-sm flex-1 dark:text-zinc-100">{c.content}</span><button onClick={()=>deleteLocal(c.id)} className="text-[11px] text-zinc-400 px-1">✕</button></div>))}</div>)}</div>);
-                    })}
-                  </div>
-                </SortableContext>
-                <h2 className="font-bold text-sm mb-2 dark:text-white">오늘 풀 ({poolRoots.length}그룹) · 드래그로 순서 고정</h2>
-                <SortableContext items={poolRoots.map(t=>t.id)} strategy={verticalListSortingStrategy}>
-                  <div ref={setPoolRef} id="pool-container" className={`${isPoolOver?"bg-zinc-50 dark:bg-zinc-900/50 rounded-xl p-1":""}`}>
-                    {poolRoots.map(r=>{
-                      const children=tasksWithMeta.filter(c=>c.parent_id===r.id);
-                      const isExp=expanded.has(r.id);
-                      return (<div key={r.id}><div className="flex gap-2"><div className="flex-1"><SortableItem id={r.id} task={r}/></div><button onClick={()=>moveToTop(r.id)} className="h-[46px] px-3 bg-blue-600 text-white rounded-xl text-sm font-bold">▲</button><button onClick={()=>setExpanded(s=>{const n=new Set(s);if(n.has(r.id))n.delete(r.id);else n.add(r.id);return n;})} className="h-[46px] px-2 text-xs bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-100 rounded-xl border">{isExp?"▲":"▼"} {children.length}</button><button onClick={()=>deleteLocal(r.id)} className="h-[46px] px-2 bg-zinc-100 dark:bg-zinc-800 dark:text-white rounded-xl text-xs">✕</button></div>{isExp&&(<div className="ml-6 border-l-2 border-zinc-200 dark:border-zinc-700 pl-3 mb-3 space-y-1">{children.map(c=>(<div key={c.id} className="flex gap-2 items-center"><div className="flex-1"><SortableItem id={c.id} task={c} parentContent={r.content} showBreadcrumb={true}/></div><button onClick={()=>moveToTop(c.id)} className="h-[40px] px-3 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200 rounded-xl text-xs">▲</button><button onClick={()=>deleteLocal(c.id)} className="h-[40px] px-2 bg-zinc-100 dark:bg-zinc-800 rounded-xl text-xs">✕</button></div>))}</div>)}</div>);
-                    })}
-                  </div>
-                </SortableContext>
-              </div>
-              <DragOverlay>{activeId?<div className="p-3 bg-white dark:bg-zinc-900 shadow-xl rounded-xl border text-sm dark:text-white">{taskMap[activeId]?.content}</div>:null}</DragOverlay>
-            </DndContext>
+        </div>
+        <div className="flex flex-col gap-1 ml-1 shrink-0">
+          {!isTop? (
+            <>
+              <button onClick={()=>onMoveTop(task.id)} className="w-7 h-7 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-xs font-bold">▲</button>
+              {hasChildren && <button onClick={()=>onToggle(task.id)} className="w-7 h-7 bg-gray-100 dark:bg-gray-700 rounded-lg text-[11px]">{expanded? '▲' : '▼'}</button>}
+              <button onClick={()=>onDelete(task.id)} className="w-7 h-7 bg-gray-100 dark:bg-gray-700 rounded-lg text-xs">✕</button>
+            </>
+          ) : (
+            <>
+              <button onClick={()=>onComplete(task.id)} className="w-7 h-7 bg-black dark:bg-white text-white dark:text-black rounded-lg text-xs font-bold">✓</button>
+              <button onClick={()=>onMoveDown(task.id)} className="w-7 h-7 bg-gray-100 dark:bg-gray-700 rounded-lg text-xs">▼</button>
+            </>
           )}
-          {activeTab==="history"&&(<div className="p-4">{groupedLogs.length===0&&<div className="text-sm text-zinc-400">Top3에서 ✓ 누르면 여기 쌓임</div>}{groupedLogs.map(([date,items])=>(<div key={date} className="mb-6"><div className="font-semibold text-sm mb-2 dark:text-white">{date} · {items.length}개</div>{items.map((l,i)=>(<div key={i} className="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-900 border dark:border-zinc-800 mb-2 text-sm"><span className="text-green-600 mr-2">✓</span>{l.parentContent&&<span className="text-[11px] text-zinc-500 dark:text-zinc-400">{l.parentContent} ▸ </span>}<span className="dark:text-zinc-200">{l.content}</span><span className="float-right text-xs text-zinc-400">{new Date(l.completed_at).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})}</span></div>))}</div>))}</div>)}
-          {activeTab==="build"&&(<div className="p-4 text-sm"><div className="flex justify-between items-center mb-3"><div className="font-bold dark:text-white">빌드 히스토리</div><div className="text-[11px] text-zinc-400">{buildStatus}</div></div>{changelog.length>0?changelog.map(b=>(<div key={b.version} className="border-l-2 border-zinc-200 dark:border-zinc-700 pl-3 py-2 mb-4"><div className="flex gap-2 items-center"><span className="font-bold dark:text-white">{b.version}</span><span className={`text-xs px-1.5 rounded ${b.status==="현재"?"bg-blue-100 text-blue-600":"bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-200"}`}>{b.status}</span><span className="text-xs text-zinc-400">{b.date}</span></div><ul className="mt-2 list-disc list-inside text-[13px] text-zinc-700 dark:text-zinc-300 space-y-1">{b.changes.map((c,i)=><li key={i}>{c}</li>)}</ul></div>)):commits.map(c=>(<div key={c.sha} className="border-l-2 border-zinc-200 dark:border-zinc-700 pl-3 py-2 mb-2"><div className="flex gap-2"><span className="font-bold dark:text-white text-xs">{c.sha.slice(0,7)}</span><span className="text-xs text-zinc-400">{new Date(c.commit.author.date).toLocaleDateString("ko-KR")}</span></div><div className="text-zinc-600 dark:text-zinc-300 mt-1 whitespace-pre-wrap text-[13px]">{c.commit.message}</div></div>))}</div>)}
         </div>
       </div>
+
+      {/* 풀에서 펼친 하위 - 버그 수정 핵심 */}
+      {!isTop && expanded && childrenList && childrenList.length>0 && (
+        <div className="ml-6 mt-2 pl-3 border-l-2 border-gray-200 dark:border-gray-700 flex flex-col gap-2">
+          {childrenList.map(child=>{
+            const childParent = parentContent || task.content
+            return (
+            <div key={child.id} className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-2 flex justify-between items-center border dark:border-gray-700">
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] text-gray-500 truncate">{childParent} ▸</div>
+                <div className="text-[13px] truncate">{child.content}</div>
+              </div>
+              <div className="flex gap-1 ml-2">
+                <button onClick={()=>onMoveTop(child.id)} className="w-6 h-6 bg-blue-500 text-white rounded text-[10px]">▲</button>
+                <button onClick={()=>onDelete(child.id)} className="w-6 h-6 bg-gray-200 dark:bg-gray-700 rounded text-[10px]">✕</button>
+              </div>
+            </div>
+          )})}
+        </div>
+      )}
+
+      {/* Top3 내부 하위 표시 */}
+      {isTop && childrenList && childrenList.length>0 && (
+        <div className="ml-4 mt-2 pl-3 border-l-2 border-blue-200 dark:border-blue-700 flex flex-col gap-1.5">
+          <div className="text-[10px] text-blue-600 dark:text-blue-300 font-bold">{childrenList.length}개 하위 포함 (1그룹)</div>
+          {childrenList.map(ch=>(
+            <div key={ch.id} className="text-[12px] bg-white/80 dark:bg-gray-800/70 rounded px-2 py-1.5 flex justify-between items-center">
+              <span className="truncate">• {ch.content}</span>
+              <button onClick={()=>onComplete(ch.id)} className="ml-2 shrink-0 text-[10px] bg-black dark:bg-white text-white dark:text-black rounded px-1.5 py-0.5">✓</button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
-  );
+  )
+}
+
+function TopDrop({ children, isOver }) {
+  const { setNodeRef } = useDroppable({ id: "top-container" })
+  return <div ref={setNodeRef} className={`rounded-2xl border-2 border-dashed p-3 min-h-[160px] transition-all ${isOver? 'border-blue-400 bg-blue-50/70 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600 bg-gradient-to-b from-blue-50/50 to-white dark:from-blue-950/20 dark:to-gray-900'}`}>{children}</div>
+}
+
+export default function App() {
+  const [tasks, setTasks] = useState([])
+  const [top3Ids, setTop3Ids] = useState(()=>JSON.parse(localStorage.getItem("top3Ids")||"[]"))
+  const [logs, setLogs] = useState(()=>JSON.parse(localStorage.getItem("completed_logs")||"[]"))
+  const [token, setToken] = useState(()=>localStorage.getItem("todoist_token")||"")
+  const [activeTab, setActiveTab] = useState("today")
+  const [expandedIds, setExpandedIds] = useState(new Set())
+  const [dark, setDark] = useState(()=>localStorage.getItem("dark")==="true")
+  const [newContent, setNewContent] = useState("")
+  const [newPri, setNewPri] = useState(1)
+  const [newParent, setNewParent] = useState("")
+  const [showToken, setShowToken] = useState(false)
+  const [tmpToken, setTmpToken] = useState(token)
+  const [completedFromTodoist, setCompletedFromTodoist] = useState([])
+  const [loadingCompleted, setLoadingCompleted] = useState(false)
+  const [isTopOver, setIsTopOver] = useState(false)
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+  const taskMap = useMemo(()=>{ const m={}; tasks.forEach(t=>m[t.id]=t); return m }, [tasks])
+
+  useEffect(()=>{ localStorage.setItem("top3Ids", JSON.stringify(top3Ids)) }, [top3Ids])
+  useEffect(()=>{ localStorage.setItem("completed_logs", JSON.stringify(logs)) }, [logs])
+  useEffect(()=>{ localStorage.setItem("dark", dark) }, [dark])
+  useEffect(()=>{ if(dark) document.documentElement.classList.add("dark"); else document.documentElement.classList.remove("dark") }, [dark])
+
+  const getChildren = (parentId) => tasks.filter(t=>t.parent_id===parentId)
+
+  const fetchTasks = async () => {
+    if(!token) return
+    try{
+      const res = await fetch(`${PROXY}/api/v1/tasks/filter?query=today%20|%20overdue`, { headers: { Authorization: `Bearer ${token}` } })
+      const data = await res.json()
+      const list = data.results || data.tasks || data || []
+      setTasks(list)
+      const ids = new Set(list.map(t=>t.id))
+      setTop3Ids(prev=>{
+        const filtered = prev.filter(id=>ids.has(id))
+        const seen = new Set()
+        const dedup=[]
+        for(const id of filtered){
+          const map = Object.fromEntries(list.map(t=>[t.id,t]))
+          const root = getRootId(map[id], map)
+          if(!seen.has(root)){ seen.add(root); dedup.push(id) }
+        }
+        return dedup
+      })
+    }catch(e){ console.error("fetchTasks", e) }
+  }
+
+  // v1.17 NEW: 1주일치 완료 가져오기
+  const fetchCompleted = async () => {
+    if(!token) return
+    setLoadingCompleted(true)
+    try{
+      const since = new Date(Date.now()-7*24*60*60*1000).toISOString()
+      const res = await fetch(`${PROXY}/api/v1/completed/get_all?since=${encodeURIComponent(since)}&limit=100`, { headers: { Authorization: `Bearer ${token}` } })
+      if(!res.ok) throw new Error("completed api fail")
+      const data = await res.json()
+      setCompletedFromTodoist(data.items || [])
+    }catch(e){ console.log("completed fetch fail, use local only", e); setCompletedFromTodoist([]) }
+    setLoadingCompleted(false)
+  }
+
+  useEffect(()=>{ fetchTasks() }, [token])
+  useEffect(()=>{ if(activeTab==="history") fetchCompleted() }, [activeTab])
+
+  const getTop3GroupCount = () => {
+    const set = new Set()
+    top3Ids.forEach(id=>{ const t=taskMap[id]; if(t) set.add(getRootId(t, taskMap)) })
+    return set.size
+  }
+
+  const moveToTop = (id) => {
+    const task = taskMap[id]; if(!task) return
+    const root = getRootId(task, taskMap)
+    const existingRoots = new Set(top3Ids.map(tid=> taskMap[tid]? getRootId(taskMap[tid], taskMap) : null).filter(Boolean))
+    if(existingRoots.has(root)) return
+    if(getTop3GroupCount()>=3){ alert("Top3는 최대 3개! (부모+하위 포함 1그룹)"); return }
+    setTop3Ids(prev=>[...prev, id])
+  }
+  const moveDown = (id) => setTop3Ids(prev=>prev.filter(t=>t!==id))
+
+  const deleteLocal = (id) => {
+    const toRemove = new Set([id])
+    tasks.forEach(t=>{ if(t.parent_id===id) toRemove.add(t.id) })
+    setTasks(prev=>prev.filter(t=>!toRemove.has(t.id)))
+    setTop3Ids(prev=>prev.filter(t=>!toRemove.has(t)))
+  }
+
+  const completeTask = async (id) => {
+    const task = taskMap[id]; if(!task) return
+    const toComplete = [task,...getChildren(id)]
+    try{ for(const t of toComplete){ await fetch(`${PROXY}/api/v1/tasks/${t.id}/close`, { method:"POST", headers:{ Authorization:`Bearer ${token}` } }) } }catch(e){ console.log(e) }
+    const now = new Date(); const dateKey = now.toISOString().slice(0,10)
+    const newLogs = toComplete.map(t=>({ id: t.id, content: t.content, completedAt: now.toISOString(), dateKey }))
+    setLogs(prev=>[...newLogs,...prev])
+    const removeSet = new Set(toComplete.map(t=>t.id))
+    setTasks(prev=>prev.filter(t=>!removeSet.has(t.id)))
+    setTop3Ids(prev=>prev.filter(t=>!removeSet.has(t)))
+  }
+
+  const addTask = async () => {
+    if(!newContent.trim()) return
+    const body = { content: newContent, priority: newPri, parent_id: newParent||undefined }
+    try{
+      const res = await fetch(`${PROXY}/api/v1/tasks`, { method:"POST", headers:{ "Content-Type":"application/json", Authorization:`Bearer ${token}` }, body: JSON.stringify(body) })
+      const created = await res.json()
+      setTasks(prev=>[created,...prev]); setNewContent(""); setNewParent("")
+    }catch(e){ alert("추가 실패 - 토큰 확인") }
+  }
+
+  const topRoots = useMemo(()=>{ const s=new Set(); top3Ids.forEach(id=>{ const t=taskMap[id]; if(t) s.add(getRootId(t, taskMap)) }); return s }, [top3Ids, taskMap])
+  const poolTasks = useMemo(()=> tasks.filter(t=>{
+    const root=getRootId(t, taskMap)
+    if(topRoots.has(root)) return false
+    if(t.parent_id && taskMap[t.parent_id]) return false // 자식은 부모 카드 안에서만 표시 (버그 수정)
+    return true
+  }), [tasks, topRoots, taskMap])
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event; setIsTopOver(false); if(!over) return
+    if(over.id==="top-container"){ moveToTop(active.id); return }
+    if(poolTasks.find(t=>t.id===active.id) && poolTasks.find(t=>t.id===over.id)){
+      const oldIdx = poolTasks.findIndex(t=>t.id===active.id)
+      const newIdx = poolTasks.findIndex(t=>t.id===over.id)
+      const newPool = arrayMove(poolTasks, oldIdx, newIdx)
+      const other = tasks.filter(t=>!poolTasks.find(p=>p.id===t.id))
+      let rebuilt=[]; newPool.forEach(p=>{ rebuilt.push(p); getChildren(p.id).forEach(c=>rebuilt.push(c)) })
+      setTasks([...rebuilt,...other.filter(o=>!rebuilt.find(r=>r.id===o.id))])
+      return
+    }
+    if(top3Ids.includes(active.id) && top3Ids.includes(over.id)){
+      setTop3Ids(prev=> arrayMove(prev, top3Ids.indexOf(active.id), top3Ids.indexOf(over.id)))
+    }
+  }
+
+  const groupedLogs = useMemo(()=>{
+    const all=[...logs]
+    completedFromTodoist.forEach(c=>{ const dk=(c.completed_at||"").slice(0,10); if(dk) all.push({ id:c.task_id||c.id, content:c.content, completedAt:c.completed_at, dateKey:dk, fromTodoist:true }) })
+    const map=new Map(); all.forEach(l=>{ const key=l.id+"_"+l.dateKey; if(!map.has(key)) map.set(key,l) })
+    const arr=Array.from(map.values()).sort((a,b)=> new Date(b.completedAt)-new Date(a.completedAt))
+    const grouped={}; arr.forEach(l=>{ if(!grouped[l.dateKey]) grouped[l.dateKey]=[]; grouped[l.dateKey].push(l) })
+    return Object.entries(grouped).sort((a,b)=> b[0].localeCompare(a[0]))
+  }, [logs, completedFromTodoist])
+
+  return (
+    <div className={`min-h-screen bg-gray-50 dark:bg-gray-950 flex justify-center ${dark?'dark':''}`}>
+      <div className="w-full max-w-[430px] bg-white dark:bg-gray-900 min-h-screen shadow-xl flex flex-col" style={{paddingTop:"env(safe-area-inset-top)"}}>
+        <header className="flex justify-between items-center p-4 border-b dark:border-gray-800">
+          <div className="font-bold text-[16px]">{VERSION} <span className="text-xs font-normal text-gray-500">Daily-Todo</span></div>
+          <div className="flex gap-2">
+            <button onClick={()=>setShowToken(!showToken)} className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-800 text-sm">⚙️</button>
+            <button onClick={()=>setDark(!dark)} className="w-8 h-8 rounded-full bg-gray-100 dark:bg-gray-800 text-sm">{dark?'☀️':'🌙'}</button>
+          </div>
+        </header>
+        {showToken && <div className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border-b dark:border-gray-800 flex gap-2"><input value={tmpToken} onChange={e=>setTmpToken(e.target.value)} placeholder="Todoist token" className="flex-1 px-2 py-1.5 rounded border text-xs dark:bg-gray-800" /><button onClick={()=>{localStorage.setItem("todoist_token", tmpToken); setToken(tmpToken); setShowToken(false); fetchTasks()}} className="bg-black dark:bg-white text-white dark:text-black px-3 rounded text-xs font-bold">저장</button></div>}
+        <div className="flex border-b dark:border-gray-800 sticky top-0 bg-white dark:bg-gray-900 z-10">{["today","history","changelog"].map(tab=><button key={tab} onClick={()=>setActiveTab(tab)} className={`flex-1 py-3 text-[13px] ${activeTab===tab? 'border-b-2 border-black dark:border-white font-bold' : 'text-gray-500'}`}>{tab==="today"?"오늘 할 일":tab==="history"?"날짜별 완료":"빌드 히스토리"}</button>)}</div>
+
+        {activeTab==="today" && <div className="flex-1 overflow-auto p-3 flex flex-col gap-4">
+          <div className="flex gap-2">
+            <input value={newContent} onChange={e=>setNewContent(e.target.value)} onKeyDown={e=>e.key==='Enter' && addTask()} placeholder="추가업무" className="flex-1 px-3 py-2.5 rounded-xl border bg-blue-50 dark:bg-gray-800 border-blue-200 dark:border-gray-700 text-sm outline-none focus:ring-2 focus:ring-blue-300" />
+            <select value={newPri} onChange={e=>setNewPri(Number(e.target.value))} className="px-2 rounded-xl border text-sm dark:bg-gray-800"><option value={1}>P4</option><option value={2}>P3</option><option value={3}>P2</option><option value={4}>P1</option></select>
+            <select value={newParent} onChange={e=>setNewParent(e.target.value)} className="px-2 rounded-xl border text-sm dark:bg-gray-800 max-w-[85px]"><option value="">부모없음</option>{tasks.filter(t=>!t.parent_id).map(t=><option key={t.id} value={t.id}>{t.content.slice(0,12)}</option>)}</select>
+            <button onClick={addTask} className="bg-blue-500 hover:bg-blue-600 text-white px-4 rounded-xl text-sm font-bold">+</button>
+          </div>
+
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} onDragOver={(e)=>{ if(e.over?.id==="top-container") setIsTopOver(true); else setIsTopOver(false) }}>
+            <div className="flex flex-col gap-2">
+              <div className="text-[13px] font-bold flex justify-between items-center"><span>🎯 Top3 ({getTop3GroupCount()}/3)</span><span className="text-[10px] font-normal text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">파란색 강조</span></div>
+              <TopDrop isOver={isTopOver}>
+                {top3Ids.length===0? <div className="text-center text-gray-400 text-sm py-10">▲로 올려서 Top3를 채워보세요<br/><span className="text-[11px]">위로 올라온 카드는 파란색으로 강조됩니다</span></div> : <SortableContext items={top3Ids} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-2.5">{top3Ids.map(id=>{ const t=taskMap[id]; if(!t) return null; const children=getChildren(id); return <SortableItem key={id} task={t} isTop={true} hasChildren={children.length>0} childrenList={children} onComplete={completeTask} onMoveDown={moveDown} onDelete={deleteLocal} /> })}</div></SortableContext>}
+              </TopDrop>
+            </div>
+
+            <div className="flex flex-col gap-2 mt-1">
+              <div className="text-[13px] font-bold flex justify-between items-center"><span>📋 오늘 풀 ({poolTasks.length})</span><span className="text-[10px] font-normal text-yellow-700 bg-yellow-100 px-2 py-0.5 rounded-full">상위3개 노란색 후보</span></div>
+              <SortableContext items={poolTasks.map(t=>t.id)} strategy={verticalListSortingStrategy}>
+                <div className="flex flex-col gap-2.5">
+                  {poolTasks.map((t, idx)=>{
+                    const children=getChildren(t.id); const isCandidate=idx<3; const expanded=expandedIds.has(t.id)
+                    return <SortableItem key={t.id} task={t} isCandidate={isCandidate} hasChildren={children.length>0} expanded={expanded} childrenList={children} onToggle={(pid)=>setExpandedIds(prev=>{ const n=new Set(prev); if(n.has(pid)) n.delete(pid); else n.add(pid); return n })} onMoveTop={moveToTop} onDelete={deleteLocal} />
+                  })}
+                </div>
+              </SortableContext>
+              {poolTasks.length===0 && <div className="text-center text-gray-400 text-sm py-6">오늘 할 일이 없습니다 🎉</div>}
+            </div>
+          </DndContext>
+        </div>}
+
+        {activeTab==="history" && <div className="flex-1 overflow-auto p-3">
+          <div className="flex justify-between items-center mb-3"><div className="font-bold text-sm">완료 기록 (Todoist 1주일 + 로컬)</div><button onClick={fetchCompleted} className="text-[11px] bg-gray-100 dark:bg-gray-800 px-2.5 py-1.5 rounded-lg border">{loadingCompleted?"불러오는중...":"🔄 1주일치 새로고침"}</button></div>
+          {groupedLogs.length===0? <div className="text-center text-gray-400 py-12 text-sm">완료 기록이 없습니다.<br/>Top3에서 ✓로 완료하면 여기에 쌓입니다.<br/>Todoist에서 완료한 것도 1주일치는 자동으로 가져옵니다.</div> : <div className="flex flex-col gap-4">{groupedLogs.map(([date, items])=><div key={date} className="border dark:border-gray-700 rounded-xl p-3 bg-gray-50 dark:bg-gray-800/50"><div className="font-bold text-xs mb-2 flex justify-between"><span>{date}</span><span className="font-normal text-gray-500">{items.length}개</span></div><div className="flex flex-col gap-1.5">{items.map(it=><div key={it.id+"_"+it.completedAt} className="text-[13px] bg-white dark:bg-gray-900 rounded-lg p-2.5 border dark:border-gray-700 flex justify-between items-center"><span className="truncate flex-1 mr-2">{it.content}</span><div className="flex gap-1 shrink-0">{it.fromTodoist && <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">Todoist</span>}<span className="text-[10px] text-gray-400">{new Date(it.completedAt).toLocaleTimeString('ko-KR',{hour:'2-digit', minute:'2-digit'})}</span></div></div>)}</div></div>)}</div>}
+        </div>}
+
+        {activeTab==="changelog" && <div className="p-4 text-[12px] leading-relaxed dark:text-gray-300"><div className="font-bold text-sm mb-3">📦 빌드 히스토리</div><div className="border rounded-xl p-3 mb-3 bg-blue-50 dark:bg-blue-900/20 border-blue-200"><div className="font-bold">v1.17 (2026-09-28) - 3가지 통합 업데이트</div><ul className="list-disc pl-4 mt-2 space-y-1"><li><b>Todoist 완료 1주일치 연동:</b> /completed/get_all?since=7일전&limit=100 프록시 경유, 날짜별 완료 탭에서 로컬+Todoist 합쳐서 표시, 중복 제거</li><li><b>2단계 색 시스템:</b> Top3 박스 파란색 강조 (bg-blue-50 border-blue-300), 풀 상위 3개 노란색 후보 (bg-yellow-50 + 다음 후보 뱃지), 아래로 내리면 색 제거</li><li><b>하위업무 표시 버그 수정:</b> parent_id 포함 전체 fetch 유지, pool에서는 부모만 표시, 자식은 ▼ 펼치기로 border-l-2 표시, breadcrumb 유지, Top3에서는 border-l-2로 자식 항상 표시</li></ul></div><div className="border rounded-xl p-3 opacity-70"><div className="font-bold">v1.16.3</div><div>풀 드래그 고정, Top3/풀 분리, 부모+하위 1그룹 유지</div></div></div>}
+      </div>
+    </div>
+  )
 }
