@@ -54,9 +54,9 @@ export default function App(){
     setBuildStatus("loading changelog.json");
     fetch(`${base}changelog.json?ts=${Date.now()}`)
       .then(async r=>{ if(!r.ok) throw new Error("no changelog"); return r.json(); })
-      .then(data=>{ setChangelog(data); setBuildStatus(`changelog:${data.length}개 로드`); })
+      .then(data=>{ setChangelog(data); setBuildStatus(`changelog:${data.length}개`); })
       .catch(()=>{
-        setBuildStatus("fallback: commits API");
+        setBuildStatus("fallback: commits");
         fetch(`https://api.github.com/repos/${REPO}/commits?per_page=30`)
           .then(async r=>{ const t=await r.text(); if(!r.ok) throw new Error(t.slice(0,150)); return JSON.parse(t); })
           .then(d=>{ setCommits(d); setBuildStatus(`commits:${d.length}개`); })
@@ -79,7 +79,6 @@ export default function App(){
       const results = data.results || [];
       const mapped = results.map(t=> ({ id: t.id, content: t.content, priority: t.priority||1, parent_id: t.parent_id||null }));
       setTasks(mapped);
-      if(top3Ids.length===0){ setTop3Ids(mapped.filter(t=>!t.parent_id).slice(0,2).map(t=>t.id)); }
       setFetchStatus(`success:${mapped.length}개`);
     } catch(e){ setFetchStatus(`error:Load failed - ${e.message}`); }
   };
@@ -87,36 +86,153 @@ export default function App(){
   useEffect(()=>{
     if(tasks.length===0 &&!token){
       const mock=[ {id:"1", content:"주간 피드백 정리", priority:4, parent_id:null}, {id:"1-1", content:"이메일 발송", priority:3, parent_id:"1"}, {id:"1-2", content:"데이터 정리", priority:2, parent_id:"1"}, {id:"2", content:"고객사 미팅 준비", priority:4, parent_id:null}, {id:"2-1", content:"이메일 발송", priority:3, parent_id:"2"}, {id:"3", content:"힐링코드 5분", priority:3, parent_id:null}, {id:"4", content:"운동 30분", priority:2, parent_id:null}, {id:"5", content:"아파트 관리비 내기", priority:1, parent_id:null}, ];
-      setTasks(mock); if(top3Ids.length===0) setTop3Ids(["1","3"]);
+      setTasks(mock); 
     }
     if(token){ loadTodoist(token); }
   },[]);
 
   const taskMap = useMemo(()=> Object.fromEntries(tasks.map(t=>[t.id,t])), [tasks]);
-  const tasksWithMeta = useMemo(()=> tasks.map(t=> ({ ...t, parentContent: t.parent_id? taskMap[t.parent_id]?.content : null, childrenCount: tasks.filter(c=>c.parent_id===t.id).length })), [tasks, taskMap]);
+
+  const getRootId = (task) => {
+    if(!task) return null;
+    let cur = task;
+    const visited = new Set();
+    while(cur && cur.parent_id && taskMap[cur.parent_id] && !visited.has(cur.parent_id)){
+      visited.add(cur.id);
+      cur = taskMap[cur.parent_id];
+    }
+    return cur ? cur.id : task.id;
+  };
+
+  const tasksWithMeta = useMemo(()=> tasks.map(t=> ({ 
+    ...t, 
+    rootId: getRootId(t),
+    parentContent: t.parent_id? taskMap[t.parent_id]?.content : null, 
+    childrenCount: tasks.filter(c=>c.parent_id===t.id).length 
+  })), [tasks, taskMap]);
+
+  // Top3 청소: 존재하지 않는 ID 제거 + 같은 root 그룹 중복 제거 (첫번째만 유지)
+  useEffect(()=>{
+    if(tasks.length===0) return;
+    setTop3Ids(prev => {
+      const existing = prev.filter(id => taskMap[id]);
+      const seenRoots = new Set();
+      const deduped = [];
+      for(const id of existing){
+        const t = taskMap[id];
+        if(!t) continue;
+        const root = getRootId(t);
+        if(seenRoots.has(root)) continue; // 같은 부모 그룹 이미 있음
+        seenRoots.add(root);
+        deduped.push(id);
+      }
+      return deduped.slice(0,3);
+    });
+  },[tasks]);
+
   const topTasks = useMemo(()=> top3Ids.map(id=> tasksWithMeta.find(t=>t.id===id)).filter(Boolean), [tasksWithMeta, top3Ids]);
   const rootTasks = useMemo(()=> tasksWithMeta.filter(t=>!t.parent_id), [tasksWithMeta]);
-  const poolRoots = useMemo(()=> rootTasks.filter(t=>!top3Ids.includes(t.id)), [rootTasks, top3Ids]);
+  const poolRoots = useMemo(()=> {
+    const topRoots = new Set(top3Ids.map(id => {
+      const t = taskMap[id];
+      return t ? getRootId(t) : null;
+    }).filter(Boolean));
+    return rootTasks.filter(t=>!topRoots.has(t.id));
+  }, [rootTasks, top3Ids, taskMap]);
 
-  const moveToTop = (id) => { if(top3Ids.includes(id)) return; if(top3Ids.length>=3){ alert("Top3는 최대 3개!"); return; } setTop3Ids(p=>[...p, id]); };
+  const getTop3GroupCount = () => {
+    const groups = new Set(top3Ids.map(id => {
+      const t = taskMap[id];
+      return t ? getRootId(t) : id;
+    }));
+    return groups.size;
+  };
+
+  const moveToTop = (id) => {
+    const task = taskMap[id];
+    if(!task) return;
+    const root = getRootId(task);
+    const existingGroups = new Set(top3Ids.map(tid => {
+      const tt = taskMap[tid];
+      return tt ? getRootId(tt) : tid;
+    }));
+    if(existingGroups.has(root)){
+      // 이미 같은 그룹이 Top3에 있음 - 중복 방지
+      return;
+    }
+    if(getTop3GroupCount() >= 3){
+      alert("Top3는 최대 3개! (부모+하위 포함 1그룹)");
+      return;
+    }
+    setTop3Ids(p=>[...p, id]);
+  };
 
   const handleDragEnd = (e)=>{
     const {active, over} = e; setActiveId(null); if(!active) return;
-    const aId = active.id; const inTop = top3Ids.includes(aId); const overId = over?.id;
-    const overTop = overId==="top-container" || (overId && top3Ids.includes(overId)) || (isTopOver && !inTop);
-    if(!inTop && overTop){ if(top3Ids.length>=3) return; setTop3Ids(p=> p.includes(aId) ? p : [...p, aId]); return; }
-    if(inTop && !overTop && overId){ if(overId==="pool-container" || poolRoots.find(t=>t.id===overId)){ setTop3Ids(p=>p.filter(x=>x!==aId)); return; } }
-    if(inTop && overTop && overId && top3Ids.includes(overId)){ const oi=top3Ids.indexOf(aId), ni=top3Ids.indexOf(overId); if(oi!==-1&&ni!==-1) setTop3Ids(arrayMove(top3Ids, oi, ni)); return; }
+    const aId = active.id; 
+    const aTask = taskMap[aId];
+    if(!aTask) return;
+    const aRoot = getRootId(aTask);
+    const overId = over?.id;
+    const overTop = overId==="top-container" || (overId && top3Ids.includes(overId)) || (isTopOver);
+    const existingGroups = new Set(top3Ids.map(tid => { const tt = taskMap[tid]; return tt ? getRootId(tt) : tid; }));
+    const inTop = top3Ids.includes(aId);
+
+    if(!inTop && overTop){
+      if(existingGroups.has(aRoot)) return;
+      if(getTop3GroupCount() >=3) return;
+      setTop3Ids(p=> p.includes(aId) ? p : [...p, aId]);
+      return;
+    }
+    if(inTop && !overTop && overId){
+      if(overId==="pool-container" || poolRoots.find(t=>t.id===overId) || overId==="today-pool"){
+        setTop3Ids(p=>p.filter(x=>x!==aId));
+        return;
+      }
+    }
+    if(inTop && overTop && overId && top3Ids.includes(overId)){
+      const oi=top3Ids.indexOf(aId), ni=top3Ids.indexOf(overId);
+      if(oi!==-1&&ni!==-1) setTop3Ids(arrayMove(top3Ids, oi, ni));
+      return;
+    }
   };
 
   const completeTask = async (id)=>{
     const t = taskMap[id]; if(!t) return;
     if(token){ try{ await fetchWithProxy(`/tasks/${id}/close`, {method:"POST"}); }catch(e){} }
-    const log={ id, content:t.content, parentContent: t.parent_id? taskMap[t.parent_id]?.content:null, completed_at:new Date().toISOString(), dateKey:new Date().toISOString().slice(0,10) };
-    setLogs(p=>[log,...p]); setTasks(p=>p.filter(x=>x.id!==id && x.parent_id!==id)); setTop3Ids(p=>p.filter(x=>x!==id));
+    // 부모 완료 시 하위도 같이 완료 로그로
+    const children = tasks.filter(c=>c.parent_id===id);
+    const logsToAdd = [{ id, content:t.content, parentContent: t.parent_id? taskMap[t.parent_id]?.content:null, completed_at:new Date().toISOString(), dateKey:new Date().toISOString().slice(0,10) }];
+    if(children.length>0 && !t.parent_id){
+      children.forEach(ch=>{
+        logsToAdd.push({ id: ch.id, content: ch.content, parentContent: t.content, completed_at:new Date().toISOString(), dateKey:new Date().toISOString().slice(0,10) });
+        // Todoist 하위도 close 시도
+        if(token){ fetchWithProxy(`/tasks/${ch.id}/close`, {method:"POST"}).catch(()=>{}); }
+      });
+    }
+    setLogs(p=>[...logsToAdd, ...p]); 
+    setTasks(p=>p.filter(x=>x.id!==id && x.parent_id!==id)); 
+    setTop3Ids(p=>p.filter(x=>{
+      if(x===id) return false;
+      if(children.some(c=>c.id===x)) return false;
+      return true;
+    }));
   };
 
-  const deleteLocal = (id)=>{ setTasks(p=>p.filter(x=>x.id!==id && x.parent_id!==id)); setTop3Ids(p=>p.filter(x=>x!==id)); };
+  const deleteLocal = (id)=>{ 
+    const t = taskMap[id];
+    const isParent = t && !t.parent_id;
+    setTasks(p=>p.filter(x=>{
+      if(x.id===id) return false;
+      if(isParent && x.parent_id===id) return false; // 부모 제외 시 하위도 제외
+      return true;
+    })); 
+    setTop3Ids(p=>p.filter(x=>{
+      if(x===id) return false;
+      if(isParent && taskMap[x]?.parent_id===id) return false;
+      return true;
+    })); 
+  };
 
   const addTask = async ()=>{ if(!newContent.trim()) return; const newId=Date.now().toString(); const nt={ id:newId, content:newContent.trim(), priority:newPriority, parent_id:newParent||null }; if(token){ try{ const created=await fetchWithProxy(`/tasks`, {method:"POST", body: JSON.stringify({content: nt.content, priority: nt.priority, parent_id: nt.parent_id||undefined, due_string:"today"})}); nt.id=created.id||newId; }catch(e){} } setTasks(p=>[...p, nt]); setNewContent(""); setNewParent(""); };
 
@@ -127,7 +243,7 @@ export default function App(){
       <div className="min-h-screen bg-zinc-50 dark:bg-black flex justify-center">
         <div className="w-[430px] bg-white dark:bg-zinc-950 min-h-screen border-x border-zinc-200 dark:border-zinc-800 flex flex-col">
           <div className="sticky top-0 z-30 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800 px-4 py-3 flex justify-between items-center" style={{paddingTop:'calc(12px + env(safe-area-inset-top))'}}>
-            <span className="font-bold dark:text-white">Daily-Todo v1.16</span>
+            <span className="font-bold dark:text-white">Daily-Todo v1.16.2</span>
             <div className="flex gap-2">
               <button onClick={()=> setShowToken(!showToken)} className="w-9 h-9 rounded-full bg-zinc-100 dark:bg-zinc-800 dark:text-white flex items-center justify-center text-sm">⚙️</button>
               <button onClick={()=> setTheme(theme==="light"?"dark":"light")} className="w-9 h-9 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center">{theme==="light"?"🌙":"☀️"}</button>
@@ -140,7 +256,7 @@ export default function App(){
                 <input value={token} onChange={e=>setToken(e.target.value)} type="password" placeholder="API token" className="flex-1 px-3 py-2 rounded-lg border text-sm text-black"/>
                 <button onClick={()=>{ localStorage.setItem(TOKEN_KEY, token); setShowToken(false); loadTodoist(token); }} className="px-3 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-bold">저장 & 불러오기</button>
               </div>
-              <div className="text-[11px] mt-2 dark:text-zinc-300 text-zinc-600">상태: {fetchStatus} | {PROXY}</div>
+              <div className="text-[11px] mt-2 dark:text-zinc-300 text-zinc-600">상태: {fetchStatus} | 그룹수: {getTop3GroupCount()}/3</div>
             </div>
           )}
           <div className="flex border-b border-zinc-200 dark:border-zinc-800 sticky top-[52px] z-20 bg-white dark:bg-zinc-950">
@@ -162,24 +278,70 @@ export default function App(){
           {activeTab==="today" && (
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={e=>setActiveId(e.active.id)} onDragEnd={handleDragEnd}>
               <div className="p-4 flex-1">
-                <h2 className="font-bold text-sm mb-2 dark:text-white">지금 하는 3개 <span className="font-normal text-zinc-400">✓=Todoist완료+기록 / ✕=목록만 제외</span></h2>
+                <h2 className="font-bold text-sm mb-2 dark:text-white">지금 하는 3개 <span className="font-normal text-zinc-400">✓=Todoist완료+기록 / ✕=목록만 제외 / 부모+하위=1개</span></h2>
                 <SortableContext items={top3Ids} strategy={verticalListSortingStrategy}>
                   <div ref={setTopRef} id="top-container" className={`min-h-[160px] p-2 rounded-xl border-2 border-dashed mb-6 ${isTopOver? "bg-blue-50 dark:bg-blue-950 border-blue-400" : "bg-zinc-50 dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700"}`}>
-                    {topTasks.length===0 && <div className="text-center text-zinc-400 text-sm py-8">아래 ▲ 버튼이나 드래그로 올려보세요!</div>}
+                    {topTasks.length===0 && <div className="text-center text-zinc-400 text-sm py-8">아래 ▲ 버튼이나 드래그로 올려보세요! (부모+하위는 1개)</div>}
                     {topTasks.map(t=> {
-                      const children = tasksWithMeta.filter(c=>c.parent_id===t.id);
+                      const isParentInTop = !t.parent_id;
+                      const children = isParentInTop ? tasksWithMeta.filter(c=>c.parent_id===t.id) : [];
+                      const isChildAlone = !!t.parent_id;
                       return (
                         <div key={t.id}>
-                          <div className="flex gap-2"><div className="flex-1"><SortableItem id={t.id} task={t} parentContent={t.parentContent} showBreadcrumb={!!t.parent_id}/></div><button onClick={()=>completeTask(t.id)} className="h-[46px] px-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold">✓</button><button onClick={()=>deleteLocal(t.id)} className="h-[46px] px-2 bg-zinc-200 dark:bg-zinc-800 dark:text-white rounded-xl text-xs">✕</button></div>
-                          {children.length>0 && <div className="ml-6 border-l border-zinc-200 dark:border-zinc-700 pl-3 mb-3">{children.map(c=> (<div key={c.id} className="flex gap-2 items-center py-1"><button onClick={()=>completeTask(c.id)} className="w-5 h-5 border rounded flex items-center justify-center text-xs dark:text-zinc-200">□</button><span className="text-sm flex-1 dark:text-zinc-100">{c.content}</span><button onClick={()=>deleteLocal(c.id)} className="text-[11px] text-zinc-400 px-1">✕</button></div>))}</div>}
+                          <div className="flex gap-2">
+                            <div className="flex-1"><SortableItem id={t.id} task={t} parentContent={t.parentContent} showBreadcrumb={isChildAlone}/></div>
+                            <button onClick={()=>completeTask(t.id)} className="h-[46px] px-3 bg-black dark:bg-white text-white dark:text-black rounded-xl text-sm font-bold">✓</button>
+                            <button onClick={()=>deleteLocal(t.id)} className="h-[46px] px-2 bg-zinc-200 dark:bg-zinc-800 dark:text-white rounded-xl text-xs">✕</button>
+                          </div>
+                          {isParentInTop && children.length>0 && (
+                            <div className="ml-6 border-l-2 border-blue-200 dark:border-blue-800 pl-3 mb-3 space-y-1">
+                              <div className="text-[10px] text-blue-600 dark:text-blue-300 font-semibold">{children.length}개 하위 포함 (1그룹)</div>
+                              {children.map(c=> (
+                                <div key={c.id} className="flex gap-2 items-center py-1">
+                                  <button onClick={()=>completeTask(c.id)} className="w-5 h-5 border rounded flex items-center justify-center text-xs dark:text-zinc-200">□</button>
+                                  <span className="text-sm flex-1 dark:text-zinc-100">{c.content}</span>
+                                  <button onClick={()=>deleteLocal(c.id)} className="text-[11px] text-zinc-400 px-1">✕</button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
                   </div>
                 </SortableContext>
-                <h2 className="font-bold text-sm mb-2 dark:text-white">오늘 풀 ({poolRoots.length})</h2>
+
+                <h2 className="font-bold text-sm mb-2 dark:text-white">오늘 풀 ({poolRoots.length}그룹) · 그룹 {getTop3GroupCount()}/3</h2>
                 <SortableContext items={poolRoots.map(t=>t.id)} strategy={verticalListSortingStrategy}>
-                  <div id="pool-container">{poolRoots.map(r=>{ const children = tasksWithMeta.filter(c=>c.parent_id===r.id); const isExp = expanded.has(r.id); return (<div key={r.id}><div className="flex gap-2"><div className="flex-1"><SortableItem id={r.id} task={r}/></div><button onClick={()=>moveToTop(r.id)} className="h-[46px] px-3 bg-blue-600 text-white rounded-xl text-sm font-bold">▲</button><button onClick={()=>setExpanded(s=>{const n=new Set(s); if(n.has(r.id)) n.delete(r.id); else n.add(r.id); return n;})} className="h-[46px] px-2 text-xs bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-100 rounded-xl border">{isExp?"▲":"▼"} {children.length}</button><button onClick={()=>deleteLocal(r.id)} className="h-[46px] px-2 bg-zinc-100 dark:bg-zinc-800 dark:text-white rounded-xl text-xs">✕</button></div>{isExp && children.map(c=> (<div key={c.id} className="ml-6 flex gap-2"><div className="flex-1"><SortableItem id={c.id} task={c} parentContent={r.content} showBreadcrumb={false}/></div><button onClick={()=>moveToTop(c.id)} className="h-[46px] px-3 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200 rounded-xl text-xs">▲ Top</button><button onClick={()=>deleteLocal(c.id)} className="h-[46px] px-2 bg-zinc-100 dark:bg-zinc-800 rounded-xl text-xs">✕</button></div>))}</div>); })}</div>
+                  <div id="today-pool">
+                    {poolRoots.map(r=>{
+                      const children = tasksWithMeta.filter(c=>c.parent_id===r.id);
+                      const isExp = expanded.has(r.id);
+                      return (
+                        <div key={r.id}>
+                          <div className="flex gap-2">
+                            <div className="flex-1"><SortableItem id={r.id} task={r}/></div>
+                            <button onClick={()=>moveToTop(r.id)} className="h-[46px] px-3 bg-blue-600 text-white rounded-xl text-sm font-bold" title="Top3로 올리기 (하위 포함 1그룹)">▲</button>
+                            <button onClick={()=>setExpanded(s=>{const n=new Set(s); if(n.has(r.id)) n.delete(r.id); else n.add(r.id); return n;})} className="h-[46px] px-2 text-xs bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-100 rounded-xl border">{isExp?"▲":"▼"} {children.length}</button>
+                            <button onClick={()=>deleteLocal(r.id)} className="h-[46px] px-2 bg-zinc-100 dark:bg-zinc-800 dark:text-white rounded-xl text-xs">✕</button>
+                          </div>
+                          {isExp && (
+                            <div className="ml-6 border-l-2 border-zinc-200 dark:border-zinc-700 pl-3 mb-3 space-y-1">
+                              {children.length===0 && <div className="text-xs text-zinc-400 py-1">하위 없음</div>}
+                              {children.map(c=> (
+                                <div key={c.id} className="flex gap-2 items-center">
+                                  <div className="flex-1"><SortableItem id={c.id} task={c} parentContent={r.content} showBreadcrumb={true}/></div>
+                                  <button onClick={()=>moveToTop(c.id)} className="h-[40px] px-3 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200 rounded-xl text-xs" title="하위만 Top3로 (부모명 표시)">▲</button>
+                                  <button onClick={()=>deleteLocal(c.id)} className="h-[40px] px-2 bg-zinc-100 dark:bg-zinc-800 rounded-xl text-xs">✕</button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {poolRoots.length===0 && <div className="text-center text-zinc-400 text-sm py-4">모든 그룹이 Top3에 있음</div>}
+                  </div>
                 </SortableContext>
               </div>
               <DragOverlay>{activeId? <div className="p-3 bg-white dark:bg-zinc-900 shadow-xl rounded-xl border text-sm dark:text-white">{taskMap[activeId]?.content}</div> : null}</DragOverlay>
@@ -188,7 +350,7 @@ export default function App(){
           {activeTab==="history" && (<div className="p-4">{groupedLogs.length===0 && <div className="text-sm text-zinc-400">Top3에서 ✓ 누르면 여기 쌓임</div>}{groupedLogs.map(([date, items])=> (<div key={date} className="mb-6"><div className="font-semibold text-sm mb-2 dark:text-white">{date} · {items.length}개</div>{items.map((l,i)=>(<div key={i} className="p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-900 border dark:border-zinc-800 mb-2 text-sm"><span className="text-green-600 mr-2">✓</span>{l.parentContent && <span className="text-[11px] text-zinc-500 dark:text-zinc-400">{l.parentContent} ▸ </span>}<span className="dark:text-zinc-200">{l.content}</span><span className="float-right text-xs text-zinc-400">{new Date(l.completed_at).toLocaleTimeString("ko-KR",{hour:"2-digit",minute:"2-digit"})}</span></div>))}</div>))}</div>)}
           {activeTab==="build" && (
             <div className="p-4 text-sm">
-              <div className="flex justify-between items-center mb-3"><div className="font-bold dark:text-white">빌드 히스토리 - changelog.json 자동</div><div className="text-[11px] text-zinc-400">{buildStatus}</div></div>
+              <div className="flex justify-between items-center mb-3"><div className="font-bold dark:text-white">빌드 히스토리</div><div className="text-[11px] text-zinc-400">{buildStatus}</div></div>
               {changelog.length>0 ? changelog.map(b=>(
                 <div key={b.version} className="border-l-2 border-zinc-200 dark:border-zinc-700 pl-3 py-2 mb-4">
                   <div className="flex gap-2 items-center"><span className="font-bold dark:text-white">{b.version}</span><span className={`text-xs px-1.5 rounded ${b.status==="현재"?"bg-blue-100 text-blue-600":"bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-200"}`}>{b.status}</span><span className="text-xs text-zinc-400">{b.date}</span></div>
