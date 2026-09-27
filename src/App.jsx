@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo } from "react"
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, useDroppable } from "@dnd-kit/core"
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, useDroppable, DragOverlay } from "@dnd-kit/core"
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable"
 import { CSS } from "@dnd-kit/utilities"
 
 const PROXY = "https://todoist-proxy.apoco211.workers.dev"
-const VERSION = "v1.17.5"
+const VERSION = "v1.17.7"
 
 function getRootId(task, taskMap) {
   if (!task) return null
@@ -21,15 +21,15 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging? 0.5 : 1 }
 
-  // v1.16.3 원본 크기 그대로, 색만 요청한 것만 진하게
   let cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
-  if (isTop) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-blue-100 dark:bg-blue-900/30 border-2 border-blue-300 dark:border-blue-600"
-  if (isCandidate) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-yellow-50 dark:bg-yellow-900/20 border-2 border-yellow-300 dark:border-yellow-600/60"
+  if (isTop) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-blue-100 dark:bg-blue-900/30 border-2 border-blue-400 dark:border-blue-500"
+  if (isCandidate) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-amber-100 dark:bg-amber-900/30 border-2 border-amber-400 dark:border-amber-500"
 
   return (
-    <div ref={setNodeRef} style={style} className={cardClass}>
+    <div ref={setNodeRef} style={style} className={`${cardClass} relative`}>
+      {isCandidate && <span className="absolute -top-1.5 -right-1.5 text-[8px] bg-amber-400 text-amber-900 px-1.5 py-0.5 rounded-full font-bold shadow">TOP3 후보</span>}
       <div className="flex items-center gap-1.5">
-        <button {...attributes} {...listeners} className="text-gray-300 dark:text-gray-600 cursor-grab text-[12px]">≡</button>
+        <button {...attributes} {...listeners} className="text-gray-300 dark:text-gray-600 cursor-grab text-[12px] touch-none">≡</button>
         <div className="flex-1 min-w-0">
           {parentContent && <div className="text-[10px] text-gray-500 dark:text-gray-400 leading-none mb-0.5 truncate">{parentContent} ▸</div>}
           <div className="text-[13px] leading-tight text-gray-900 dark:text-gray-100 truncate">{task.content}</div>
@@ -37,11 +37,20 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
         <div className="flex items-center gap-0.5 shrink-0">
           {task.priority>1 && <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${task.priority===4?'bg-red-500 text-white':task.priority===3?'bg-orange-400 text-white':'bg-blue-400 text-white'}`}>P{task.priority}</span>}
           {hasChildren && <span className="text-[9px] px-1 py-0.5 rounded bg-gray-100 dark:bg-gray-700 dark:text-gray-300">{childrenList?.length} 하위</span>}
-          {!isTop? (<><button onClick={()=>onMoveTop(task.id)} className="w-6 h-6 bg-blue-500 text-white rounded-md text-[11px] font-bold">▲</button>{hasChildren && <button onClick={()=>onToggle(task.id)} className="w-6 h-6 bg-gray-100 dark:bg-gray-700 dark:text-gray-200 rounded-md text-[10px]">{expanded?'▲':'▼'}</button>}<button onClick={()=>onDelete(task.id)} className="w-6 h-6 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 rounded-md text-[10px]">✕</button></>) : (<><button onClick={()=>onComplete(task.id)} className="w-6 h-6 bg-black dark:bg-white text-white dark:text-black rounded-md text-[11px] font-bold">✓</button><button onClick={()=>onMoveDown(task.id)} className="w-6 h-6 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 rounded-md text-[10px]">▼</button></>)}
+          {!isTop? (
+            <>
+              <button onClick={()=>onMoveTop(task.id)} className="w-6 h-6 bg-blue-500 text-white rounded-md text-[11px] font-bold active:scale-95">▲</button>
+              {hasChildren && <button onClick={()=>onToggle(task.id)} className="w-6 h-6 bg-gray-100 dark:bg-gray-700 dark:text-gray-200 rounded-md text-[10px]">{expanded?'▲':'▼'}</button>}
+              <button onClick={()=>onDelete(task.id)} className="w-6 h-6 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 rounded-md text-[10px]">✕</button>
+            </>
+          ) : (
+            <>
+              <button onClick={()=>onComplete(task.id)} className="w-6 h-6 bg-black dark:bg-white text-white dark:text-black rounded-md text-[11px] font-bold">✓</button>
+              <button onClick={()=>onMoveDown(task.id)} className="w-6 h-6 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 rounded-md text-[10px]">▼</button>
+            </>
+          )}
         </div>
       </div>
-
-      {/* 하위업무 - 풀에서 ▼ 누르면 표시 */}
       {!isTop && expanded && childrenList?.length>0 && (
         <div className="ml-5 pl-2.5 border-l-2 border-gray-300 dark:border-gray-600 flex flex-col gap-1 mt-1">
           {childrenList.map(child=>(
@@ -52,9 +61,8 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
           ))}
         </div>
       )}
-
       {isTop && childrenList?.length>0 && (
-        <div className="ml-4 pl-2.5 border-l-2 border-blue-300 dark:border-blue-600 flex flex-col gap-0.5 mt-1">
+        <div className="ml-4 pl-2.5 border-l-2 border-blue-400 dark:border-blue-500 flex flex-col gap-0.5 mt-1">
           <div className="text-[9px] text-blue-600 dark:text-blue-300">{childrenList.length}개 하위 포함 (1그룹)</div>
           {childrenList.map(ch=><div key={ch.id} className="text-[11px] text-gray-700 dark:text-gray-300 truncate">• {ch.content}</div>)}
         </div>
@@ -63,9 +71,9 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
   )
 }
 
-function TopDrop({ children }) {
-  const { setNodeRef, isOver } = useDroppable({ id: "top-container" })
-  return <div ref={setNodeRef} className={`rounded-xl border-2 border-dashed p-2 min-h-[130px] ${isOver?'border-blue-400 bg-blue-50/30 dark:bg-blue-900/10':'border-gray-300 dark:border-gray-600'}`}>{children}</div>
+function TopDrop({ children, isOver }) {
+  const { setNodeRef } = useDroppable({ id: "top-container" })
+  return <div ref={setNodeRef} className={`rounded-xl border-2 border-dashed p-2 min-h-[130px] transition-colors ${isOver?'border-blue-400 bg-blue-50/50 dark:bg-blue-900/20':'border-gray-300 dark:border-gray-600'}`}>{children}</div>
 }
 
 export default function App() {
@@ -82,6 +90,7 @@ export default function App() {
   const [showToken, setShowToken] = useState(false)
   const [tmpToken, setTmpToken] = useState(token)
   const [completedFromTodoist, setCompletedFromTodoist] = useState([])
+  const [activeId, setActiveId] = useState(null)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
   const taskMap = useMemo(()=>{ const m={}; tasks.forEach(t=>m[t.id]=t); return m }, [tasks])
@@ -92,13 +101,11 @@ export default function App() {
 
   const fetchTasks = async (tok = token) => {
     const useToken = tok || token
-    if(!useToken){ alert("토큰 먼저 저장"); return }
+    if(!useToken) return
     try{
       const res = await fetch(`${PROXY}/api/v1/tasks/filter?query=today%20|%20overdue`, { headers: { Authorization: `Bearer ${useToken}` } })
       const data = await res.json()
       const todays = data.results || data.tasks || data || []
-
-      // 하위업무 100% 불러오기 - 핵심
       const childResults = await Promise.all(todays.map(async (t)=>{
         try{
           const r = await fetch(`${PROXY}/api/v1/tasks?parent_id=${t.id}`, { headers: { Authorization: `Bearer ${useToken}` } })
@@ -110,7 +117,7 @@ export default function App() {
       const mergedMap = {}
       ;[...todays,...allChildren].forEach(t=>{ mergedMap[t.id]=t })
       setTasks(Object.values(mergedMap))
-    }catch(e){ console.error(e); alert("불러오기 실패 - 토큰 확인") }
+    }catch(e){ console.error(e) }
   }
 
   const fetchCompleted = async () => {
@@ -132,7 +139,7 @@ export default function App() {
     const root=getRootId(t, taskMap)
     const existing=new Set(top3Ids.map(tid=>taskMap[tid]?getRootId(taskMap[tid], taskMap):null).filter(Boolean))
     if(existing.has(root)) return
-    if(getTop3GroupCount()>=3){ alert("Top3는 최대 3개!"); return }
+    if(getTop3GroupCount()>=3){ alert("Top3는 최대 3개! (부모+하위 포함 1그룹)"); return }
     setTop3Ids(p=>[...p,id])
   }
   const moveDown = (id) => setTop3Ids(p=>p.filter(t=>t!==id))
@@ -169,15 +176,19 @@ export default function App() {
     return true
   }), [tasks, topRoots, taskMap])
 
+  const handleDragStart = (e) => setActiveId(e.active.id)
   const handleDragEnd = (e) => {
-    const { active, over } = e; if(!over) return
+    const { active, over } = e
+    setActiveId(null)
+    if(!over) return
     if(over.id==="top-container"){ moveToTop(active.id); return }
-    if(poolTasks.find(t=>t.id===active.id) && poolTasks.find(t=>t.id===over.id)){
-      const oldIdx=poolTasks.findIndex(t=>t.id===active.id)
-      const newIdx=poolTasks.findIndex(t=>t.id===over.id)
-      const newPool=arrayMove(poolTasks, oldIdx, newIdx)
-      const other=tasks.filter(t=>!poolTasks.find(p=>p.id===t.id))
-      let rebuilt=[]; newPool.forEach(p=>{ rebuilt.push(p); getChildren(p.id).forEach(c=>rebuilt.push(c)) })
+    const activePoolIdx = poolTasks.findIndex(t=>t.id===active.id)
+    const overPoolIdx = poolTasks.findIndex(t=>t.id===over.id)
+    if(activePoolIdx!==-1 && overPoolIdx!==-1){
+      const newPool = arrayMove(poolTasks, activePoolIdx, overPoolIdx)
+      const other = tasks.filter(t=>!poolTasks.find(p=>p.id===t.id))
+      let rebuilt=[]
+      newPool.forEach(p=>{ rebuilt.push(p); getChildren(p.id).forEach(c=>rebuilt.push(c)) })
       setTasks([...rebuilt,...other.filter(o=>!rebuilt.find(r=>r.id===o.id))])
       return
     }
@@ -202,8 +213,6 @@ export default function App() {
           <div className="font-bold text-[14px] text-gray-900 dark:text-white">{VERSION}</div>
           <div className="flex gap-1.5"><button onClick={()=>setShowToken(!showToken)} className="w-7 h-7 rounded-full bg-gray-100 dark:bg-gray-800 dark:text-white text-[12px]">⚙️</button><button onClick={()=>setDark(!dark)} className="w-7 h-7 rounded-full bg-gray-100 dark:bg-gray-800 dark:text-white text-[12px]">{dark?'☀️':'🌙'}</button></div>
         </header>
-
-        {/* 토큰 - 가려짐 + 저장&불러오기 복구 */}
         {showToken && (
           <div className="p-2.5 bg-gray-50 dark:bg-gray-800 border-b dark:border-gray-700 flex flex-col gap-2">
             <div className="flex gap-1.5">
@@ -216,9 +225,7 @@ export default function App() {
             </div>
           </div>
         )}
-
         <div className="flex border-b dark:border-gray-800">{["today","history","changelog"].map(tab=><button key={tab} onClick={()=>setActiveTab(tab)} className={`flex-1 py-2 text-[12px] ${activeTab===tab?'border-b-2 border-black dark:border-white font-bold text-gray-900 dark:text-white':'text-gray-500 dark:text-gray-400'}`}>{tab==="today"?"오늘 할 일":tab==="history"?"날짜별 완료":"히스토리"}</button>)}</div>
-
         {activeTab==="today" && <div className="flex-1 overflow-auto p-2 flex flex-col gap-3">
           <div className="flex gap-1.5">
             <input value={newContent} onChange={e=>setNewContent(e.target.value)} placeholder="추가업무" className="flex-1 px-2.5 py-2 rounded-lg border bg-blue-50/50 dark:bg-gray-800 border-blue-100 dark:border-gray-700 text-[13px] text-gray-900 dark:text-white placeholder-gray-400" />
@@ -226,15 +233,14 @@ export default function App() {
             <select value={newParent} onChange={e=>setNewParent(e.target.value)} className="px-1.5 rounded-lg border text-[11px] dark:bg-gray-800 dark:text-white max-w-[70px]"><option value="">부모없음</option>{tasks.filter(t=>!t.parent_id).map(t=><option key={t.id} value={t.id}>{t.content.slice(0,10)}</option>)}</select>
             <button onClick={addTask} className="bg-blue-500 text-white px-2.5 rounded-lg text-[13px]">+</button>
           </div>
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <div className="flex flex-col gap-1.5"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">🎯 Top3 ({getTop3GroupCount()}/3) <span className="text-[10px] font-normal text-blue-600 dark:text-blue-300 ml-1">파란색</span></div><TopDrop>{top3Ids.length===0? <div className="text-center text-gray-400 dark:text-gray-500 text-[12px] py-6">▲로 올리기</div> : <SortableContext items={top3Ids} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{top3Ids.map(id=>{ const t=taskMap[id]; if(!t) return null; const children=getChildren(id); return <SortableItem key={id} task={t} isTop={true} hasChildren={children.length>0} childrenList={children} onComplete={completeTask} onMoveDown={moveDown} onDelete={deleteLocal} /> })}</div></SortableContext>}</TopDrop></div>
-            <div className="flex flex-col gap-1.5 mt-1"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">📋 오늘 풀 ({poolTasks.length}) <span className="text-[10px] font-normal text-amber-600 dark:text-amber-300 ml-1">상위3 노란색</span></div><SortableContext items={poolTasks.map(t=>t.id)} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{poolTasks.map((t, idx)=>{ const children=getChildren(t.id); const isCandidate=idx<3; const expanded=expandedIds.has(t.id); return <SortableItem key={t.id} task={t} isCandidate={isCandidate} hasChildren={children.length>0} expanded={expanded} childrenList={children} onToggle={(pid)=>setExpandedIds(prev=>{ const n=new Set(prev); if(n.has(pid)) n.delete(pid); else n.add(pid); return n })} onMoveTop={moveToTop} onDelete={deleteLocal} /> })}</div></SortableContext></div>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+            <div className="flex flex-col gap-1.5"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">🎯 Top3 ({getTop3GroupCount()}/3) <span className="text-[10px] font-normal text-blue-600 dark:text-blue-300 ml-1">파란색</span></div><TopDrop isOver={!!activeId}><SortableContext items={top3Ids} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{top3Ids.length===0? <div className="text-center text-gray-400 dark:text-gray-500 text-[12px] py-6">▲로 올리기 (드래그도 가능)</div> : top3Ids.map(id=>{ const t=taskMap[id]; if(!t) return null; const children=getChildren(id); return <SortableItem key={id} task={t} isTop={true} hasChildren={children.length>0} childrenList={children} onComplete={completeTask} onMoveDown={moveDown} onDelete={deleteLocal} /> })}</div></SortableContext></TopDrop></div>
+            <div className="flex flex-col gap-1.5 mt-1"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">📋 오늘 풀 ({poolTasks.length}) <span className="text-[10px] font-normal text-amber-600 dark:text-amber-300 ml-1">상위3 노란색 / 드래그 이동</span></div><SortableContext items={poolTasks.map(t=>t.id)} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{poolTasks.map((t, idx)=>{ const children=getChildren(t.id); const isCandidate=idx<3; const expanded=expandedIds.has(t.id); return <SortableItem key={t.id} task={t} isCandidate={isCandidate} hasChildren={children.length>0} expanded={expanded} childrenList={children} onToggle={(pid)=>setExpandedIds(prev=>{ const n=new Set(prev); if(n.has(pid)) n.delete(pid); else n.add(pid); return n })} onMoveTop={moveToTop} onDelete={deleteLocal} /> })}</div></SortableContext></div>
+            <DragOverlay>{activeId? <div className="rounded-lg p-2.5 bg-white dark:bg-gray-800 border-2 border-blue-400 shadow-xl text-[13px] text-gray-900 dark:text-white">{taskMap[activeId]?.content}</div> : null}</DragOverlay>
           </DndContext>
         </div>}
-
         {activeTab==="history" && <div className="flex-1 overflow-auto p-2">{groupedLogs.map(([date, items])=><div key={date} className="border dark:border-gray-700 rounded-lg p-2 bg-gray-50 dark:bg-gray-800/50 mb-2"><div className="font-bold text-[11px] mb-1 text-gray-900 dark:text-white">{date} ({items.length})</div><div className="flex flex-col gap-1">{items.map(it=><div key={it.id+"_"+it.completedAt} className="text-[12px] bg-white dark:bg-gray-900 rounded p-1.5 border dark:border-gray-700 flex justify-between text-gray-900 dark:text-gray-100"><span className="truncate">{it.content}</span>{it.fromTodoist && <span className="text-[8px] bg-blue-100 text-blue-700 px-1 rounded ml-1">T</span>}</div>)}</div></div>)}</div>}
-
-        {activeTab==="changelog" && <div className="p-2 text-[11px] text-gray-700 dark:text-gray-300">v1.17.5 - 색 Top3 파란 bg-blue-100 border-blue-300 / 풀Top3 노란 bg-yellow-50 border-yellow-300 + 하위업무 parent_id 별도 fetch 100% + 토큰 가림+저장&불러오기 + 다크모드 글씨 수정 + 디자인 v1.16.3 원본 작은 카드 유지</div>}
+        {activeTab==="changelog" && <div className="p-2 text-[11px] text-gray-700 dark:text-gray-300">v1.17.7 - 풀 이동 복구(드래그+▲), 토큰 가림+저장&불러오기, 하위업무 parent_id fetch 100%, 히스토리 1주일치, 색 Top3 파란/풀상위3 노란+배지, 다크모드, 디자인 v1.16.3 유지</div>}
       </div>
     </div>
   )
