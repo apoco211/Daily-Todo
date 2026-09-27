@@ -4,7 +4,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS } from "@dnd-kit/utilities"
 
 const PROXY = "https://todoist-proxy.apoco211.workers.dev"
-const VERSION = "v1.18.2"
+const VERSION = "v1.18.3"
 
 function getRootId(task, taskMap) {
   if (!task) return null
@@ -19,16 +19,10 @@ function getRootId(task, taskMap) {
 
 function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, expanded, onToggle, onMoveTop, onMoveDown, onComplete, onDelete, childrenList }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging? 0.6 : 1,
-    zIndex: isDragging? 20 : 0
-  }
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging? 0.6 : 1, zIndex: isDragging? 20 : 0 }
   let cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
   if (isTop) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-blue-100 dark:bg-blue-900/30 border-2 border-blue-300 dark:border-blue-500"
   if (isCandidate) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-yellow-50 dark:bg-amber-900/20 border-2 border-yellow-200 dark:border-amber-600/50"
-
   return (
     <div ref={setNodeRef} style={style} className={`${cardClass} relative`}>
       {isCandidate && <span className="absolute -top-1.5 -right-1.5 text-[8px] bg-amber-400 text-amber-900 px-1.5 py-0.5 rounded-full font-bold shadow">다음 후보</span>}
@@ -43,13 +37,13 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
           {task.priority > 1 && <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${task.priority === 4? 'bg-red-500 text-white' : task.priority === 3? 'bg-orange-400 text-white' : 'bg-blue-400 text-white'}`}>P{task.priority}</span>}
           {!isTop? (
             <>
-              <button onTouchStart={e => e.stopPropagation()} onClick={() => onMoveTop(task.id)} className="w-7 h-7 bg-blue-500 text-white rounded-md text-[11px] font-bold active:scale-95">▲</button>
+              <button onTouchStart={e => e.stopPropagation()} onClick={() => onMoveTop(task.id)} className="w-7 h-7 bg-blue-500 text-white rounded-md text-[11px] font-bold">▲</button>
               {hasChildren && <button onTouchStart={e => e.stopPropagation()} onClick={() => onToggle(task.id)} className="w-7 h-7 bg-gray-100 dark:bg-gray-700 dark:text-white rounded-md text-[10px]">{expanded? '▲' : '▼'}</button>}
               <button onTouchStart={e => e.stopPropagation()} onClick={() => onDelete(task.id)} className="w-7 h-7 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 rounded-md text-[10px]">✕</button>
             </>
           ) : (
             <>
-              <button onTouchStart={e => e.stopPropagation()} onClick={() => onComplete(task.id)} className="w-7 h-7 bg-black dark:bg-white text-white dark:text-black rounded-md text-[11px] font-bold active:scale-95">✓</button>
+              <button onTouchStart={e => e.stopPropagation()} onClick={() => onComplete(task.id)} className="w-7 h-7 bg-black dark:bg-white text-white dark:text-black rounded-md text-[11px] font-bold">✓</button>
               <button onTouchStart={e => e.stopPropagation()} onClick={() => onMoveDown(task.id)} className="w-7 h-7 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 rounded-md text-[10px]">▼</button>
             </>
           )}
@@ -74,7 +68,7 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
           {childrenList.map(ch => (
             <div key={ch.id} className="flex items-center justify-between bg-white/70 dark:bg-gray-800/70 rounded px-2 py-1">
               <span className="text-[11px] text-gray-700 dark:text-gray-300 truncate flex-1">• {ch.content}</span>
-              <button onClick={() => onComplete(ch.id)} className="ml-2 w-6 h-6 bg-black dark:bg-white text-white dark:text-black rounded text-[9px] font-bold shrink-0">✓</button>
+              <button onClick={() => onComplete(ch.id)} className="ml-2 w-6 h-6 bg-black dark:bg-white text-white dark:text-black rounded text-[9px] font-bold">✓</button>
             </div>
           ))}
         </div>
@@ -85,12 +79,13 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
 
 function TopDrop({ children, isOver }) {
   const { setNodeRef } = useDroppable({ id: "top-container" })
-  return <div ref={setNodeRef} className={`rounded-xl border-2 border-dashed p-2 min-h-[130px] transition-colors ${isOver? 'border-blue-500 bg-blue-50/50 dark:bg-blue-900/20' : 'border-gray-300 dark:border-gray-600'}`}>{children}</div>
+  return <div ref={setNodeRef} className={`rounded-xl border-2 border-dashed p-2 min-h-[130px] ${isOver? 'border-blue-500 bg-blue-50/50' : 'border-gray-300 dark:border-gray-600'}`}>{children}</div>
 }
 
 export default function App() {
   const [tasks, setTasks] = useState([])
   const [top3Ids, setTop3Ids] = useState(() => JSON.parse(localStorage.getItem("top3Ids") || "[]"))
+  const [poolOrder, setPoolOrder] = useState(() => JSON.parse(localStorage.getItem("poolOrder") || "[]")) // 풀 순서 저장
   const [logs, setLogs] = useState(() => JSON.parse(localStorage.getItem("completed_logs") || "[]"))
   const [token, setToken] = useState(() => localStorage.getItem("todoist_token") || "")
   const [activeTab, setActiveTab] = useState("today")
@@ -112,6 +107,7 @@ export default function App() {
 
   const taskMap = useMemo(() => { const m = {}; tasks.forEach(t => m[t.id] = t); return m }, [tasks])
   useEffect(() => { localStorage.setItem("top3Ids", JSON.stringify(top3Ids)) }, [top3Ids])
+  useEffect(() => { localStorage.setItem("poolOrder", JSON.stringify(poolOrder)) }, [poolOrder]) // 풀 순서 저장
   useEffect(() => { localStorage.setItem("completed_logs", JSON.stringify(logs)) }, [logs])
   useEffect(() => { localStorage.setItem("dark", String(dark)); if (dark) document.documentElement.classList.add("dark"); else document.documentElement.classList.remove("dark") }, [dark])
   const getChildren = (parentId) => tasks.filter(t => t.parent_id === parentId)
@@ -132,7 +128,22 @@ export default function App() {
       }))
       const merged = {}
       ;[...todays,...childResults.flat()].forEach(t => { merged[t.id] = t })
-      setTasks(Object.values(merged))
+      const all = Object.values(merged)
+
+      // 풀 순서 복구: localStorage에 저장된 순서대로 정렬
+      if (poolOrder.length > 0) {
+        const orderMap = new Map(poolOrder.map((id, idx) => [id, idx]))
+        all.sort((a, b) => {
+          const aIsParent =!a.parent_id ||!merged[a.parent_id]
+          const bIsParent =!b.parent_id ||!merged[b.parent_id]
+          if (!aIsParent ||!bIsParent) return 0
+          const aIdx = orderMap.has(a.id)? orderMap.get(a.id) : 9999
+          const bIdx = orderMap.has(b.id)? orderMap.get(b.id) : 9999
+          return aIdx - bIdx
+        })
+      }
+
+      setTasks(all)
       setTop3Ids(prev => {
         const filtered = prev.filter(id => merged[id])
         const seen = new Set()
@@ -167,13 +178,18 @@ export default function App() {
     if (existing.has(root)) return
     if (getTop3GroupCount() >= 3) { alert("Top3는 최대 3개! (부모+하위 포함 1그룹)"); return }
     setTop3Ids(p => [...p, id])
+    setPoolOrder(p => p.filter(x => x!== id && x!== root))
   }
-  const moveDown = (id) => setTop3Ids(p => p.filter(x => x!== id))
+  const moveDown = (id) => {
+    setTop3Ids(p => p.filter(x => x!== id))
+    setPoolOrder(p => [id,...p])
+  }
   const deleteLocal = (id) => {
     const toRemove = new Set([id])
     tasks.forEach(t => { if (t.parent_id === id) toRemove.add(t.id) })
     setTasks(p => p.filter(t =>!toRemove.has(t.id)))
     setTop3Ids(p => p.filter(t =>!toRemove.has(t)))
+    setPoolOrder(p => p.filter(t =>!toRemove.has(t)))
   }
   const completeTask = async (id) => {
     const t = taskMap[id]; if (!t) return
@@ -184,23 +200,35 @@ export default function App() {
     const rem = new Set(toComplete.map(x => x.id))
     setTasks(p => p.filter(x =>!rem.has(x.id)))
     setTop3Ids(p => p.filter(x =>!rem.has(x)))
+    setPoolOrder(p => p.filter(x =>!rem.has(x)))
   }
   const addTask = async () => {
     if (!newContent.trim()) return
     try {
       const res = await fetch(`${PROXY}/api/v1/tasks`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ content: newContent, priority: newPri, parent_id: newParent || undefined }) })
       const created = await res.json()
-      setTasks(p => [created,...p]); setNewContent(""); setNewParent("")
+      setTasks(p => [created,...p]); setPoolOrder(p => [created.id,...p]); setNewContent(""); setNewParent("")
     } catch { alert("추가 실패") }
   }
 
   const topRoots = useMemo(() => { const s = new Set(); top3Ids.forEach(id => { const t = taskMap[id]; if (t) s.add(getRootId(t, taskMap)) }); return s }, [top3Ids, taskMap])
-  const poolTasks = useMemo(() => tasks.filter(t => {
-    const root = getRootId(t, taskMap)
-    if (topRoots.has(root)) return false
-    if (t.parent_id && taskMap[t.parent_id]) return false
-    return true
-  }), [tasks, topRoots, taskMap])
+  const poolTasks = useMemo(() => {
+    let filtered = tasks.filter(t => {
+      const root = getRootId(t, taskMap)
+      if (topRoots.has(root)) return false
+      if (t.parent_id && taskMap[t.parent_id]) return false
+      return true
+    })
+    if (poolOrder.length > 0) {
+      const orderMap = new Map(poolOrder.map((id, idx) => [id, idx]))
+      filtered = [...filtered].sort((a, b) => {
+        const aIdx = orderMap.has(a.id)? orderMap.get(a.id) : 9999
+        const bIdx = orderMap.has(b.id)? orderMap.get(b.id) : 9999
+        return aIdx - bIdx
+      })
+    }
+    return filtered
+  }, [tasks, topRoots, taskMap, poolOrder])
 
   const groupedLogs = useMemo(() => {
     const all = [...logs]
@@ -236,6 +264,7 @@ export default function App() {
             const oIdx = poolTasks.findIndex(t => t.id === over.id)
             if (aIdx!== -1 && oIdx!== -1) {
               const newPool = arrayMove(poolTasks, aIdx, oIdx)
+              setPoolOrder(newPool.map(t => t.id))
               const other = tasks.filter(t =>!poolTasks.find(p => p.id === t.id))
               let rebuilt = []
               newPool.forEach(p => { rebuilt.push(p); getChildren(p.id).forEach(c => rebuilt.push(c)) })
@@ -246,13 +275,13 @@ export default function App() {
               setTop3Ids(prev => arrayMove(prev, prev.indexOf(active.id), prev.indexOf(over.id)))
             }
           }}>
-            <div className="flex flex-col gap-1.5"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">🎯 Top3 ({(() => { const s = new Set(); top3Ids.forEach(id => { const t = taskMap[id]; if (t) s.add(getRootId(t, taskMap)) }); return s.size })()}/3) <span className="text-[10px] font-normal text-blue-600 dark:text-blue-300 ml-1">파란색</span></div><TopDrop isOver={isOverTop}><SortableContext items={top3Ids} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{top3Ids.length === 0? <div className="text-center text-gray-400 dark:text-gray-500 text-[12px] py-6">▲로 올리기 (아이폰 ≡ 0.2초 길게 눌러 드래그)</div> : top3Ids.map(id => { const t = taskMap[id]; if (!t) return null; const parentName = t.parent_id && taskMap[t.parent_id]? taskMap[t.parent_id].content : undefined; return <SortableItem key={id} task={t} parentContent={parentName} isTop={true} hasChildren={getChildren(id).length > 0} childrenList={getChildren(id)} onComplete={completeTask} onMoveDown={moveDown} onDelete={deleteLocal} /> })}</div></SortableContext></TopDrop></div>
+            <div className="flex flex-col gap-1.5"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">🎯 Top3 ({getTop3GroupCount()}/3) <span className="text-[10px] font-normal text-blue-600 dark:text-blue-300 ml-1">파란색</span></div><TopDrop isOver={isOverTop}><SortableContext items={top3Ids} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{top3Ids.length === 0? <div className="text-center text-gray-400 dark:text-gray-500 text-[12px] py-6">▲로 올리기 (아이폰 ≡ 0.2초 길게 눌러 드래그)</div> : top3Ids.map(id => { const t = taskMap[id]; if (!t) return null; const parentName = t.parent_id && taskMap[t.parent_id]? taskMap[t.parent_id].content : undefined; return <SortableItem key={id} task={t} parentContent={parentName} isTop={true} hasChildren={getChildren(id).length > 0} childrenList={getChildren(id)} onComplete={completeTask} onMoveDown={moveDown} onDelete={deleteLocal} /> })}</div></SortableContext></TopDrop></div>
             <div className="flex flex-col gap-1.5 mt-1"><div className="text-[12px] font-bold text-gray-800 dark:text-gray-200">📋 오늘 풀 ({poolTasks.length}) <span className="text-[10px] font-normal text-amber-600 dark:text-amber-300 ml-1">상위3 노란색 / ≡ 길게 눌러 드래그, 나머지는 스크롤</span></div><SortableContext items={poolTasks.map(t => t.id)} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{poolTasks.map((t, idx) => { const children = getChildren(t.id); return <SortableItem key={t.id} task={t} isCandidate={idx < 3} hasChildren={children.length > 0} expanded={expandedIds.has(t.id)} childrenList={children} onToggle={pid => setExpandedIds(s => { const n = new Set(s); n.has(pid)? n.delete(pid) : n.add(pid); return n })} onMoveTop={moveToTop} onDelete={deleteLocal} onComplete={completeTask} /> })}</div></SortableContext></div>
             <DragOverlay>{activeId? <div className="rounded-lg p-3 bg-white dark:bg-gray-800 border-2 border-blue-500 shadow-2xl text-[13px] text-gray-900 dark:text-white rotate-1">{taskMap[activeId]?.content}</div> : null}</DragOverlay>
           </DndContext>
         </div>}
         {activeTab === "history" && <div className="flex-1 overflow-auto p-2">{groupedLogs.map(([date, items]) => <div key={date} className="border dark:border-gray-700 rounded-lg p-2 bg-gray-50 dark:bg-gray-800/50 mb-2"><div className="font-bold text-[11px] mb-1 text-gray-900 dark:text-white">{date} ({items.length})</div><div className="flex flex-col gap-1">{items.map(it => <div key={it.id + "_" + it.completedAt} className="text-[12px] bg-white dark:bg-gray-900 rounded p-1.5 border dark:border-gray-700 flex justify-between text-gray-900 dark:text-gray-100"><span className="truncate">{it.content}</span>{it.fromTodoist && <span className="text-[8px] bg-blue-100 text-blue-700 px-1 rounded ml-1">T</span>}</div>)}</div></div>)}</div>}
-        {activeTab === "changelog" && <div className="p-2 text-[11px] text-gray-700 dark:text-gray-300">v1.18.2 - 문서 v1.16.3 완벽 복구: 드래그 고정(arrayMove+블록), 부모+하위 1그룹 Set, breadcrumb, Top3 버그 dedup, UX 풀▲ Top3✓(close)+✕목록제외, 디자인 430px p-2.5 유지 + v1.17: 히스토리 1주일 completed/get_all, 색 Top3파란/풀상위3노란+배지, 하위 parent_id fetch+▼+border-left+개별✓(Todoist 즉시), 토큰 password+저장&불러오기, 다크모드 + 아이폰: TouchSensor 200ms, touchAction은 ≡에만, 카드 스크롤 복구</div>}
+        {activeTab === "changelog" && <div className="p-2 text-[11px] text-gray-700 dark:text-gray-300">v1.18.3 - 풀 순서 저장 복구: poolOrder localStorage 저장, 드래그시 arrayMove 후 poolOrder 갱신, fetchTasks시 저장된 순서로 정렬, 앱 다시 열어도 드래그 순서 유지, Top3 파란/풀상위3 노란, 하위 개별✓ Todoist close, 스크롤+드래그 분리 (≡에만 touch-none)</div>}
       </div>
     </div>
   )
