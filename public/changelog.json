@@ -1,15 +1,21 @@
 [
   {
-    "version": "v1.16.2",
+    "version": "v1.16.3",
     "date": "2026-09-27",
     "status": "현재",
     "changes": [
-      "버그 수정: Top3에 1개만 보여도 '최대 3개!' 박스 뜨던 현상 - 내부 숨은 ID 청소",
-      "부모+하위 = 1개로 카운트 - 부모를 Top3로 올리면 하위까지 세트로 이동, 1그룹으로 인정",
-      "목록/Top3 모두 하위업무 표시 - 오늘 풀 ▼로 펼치기, Top3에서는 부모 밑에 바로 표시",
-      "하위 단독 Top3 진입 시 부모명 breadcrumb 작은 글씨로 표시 (예: 부모업무 ▸ 하위업무)",
-      "같은 부모 그룹 중복 Top3 진입 방지 - 이미 그룹이 있으면 추가 안됨",
-      "changelog.json 자동 로드 유지"
+      "버그 수정: 오늘 풀(아래)에서 드래그하면 제자리로 돌아가던 현상 - 풀→풀 arrayMove 로직 추가",
+      "Top3는 Top3끼리, 풀은 풀끼리 순서 고정되도록 handleDragEnd 분리",
+      "부모+하위=1그룹 카운트 유지, 하위 단독 시 부모명 breadcrumb 유지"
+    ]
+  },
+  {
+    "version": "v1.16.2",
+    "date": "2026-09-27",
+    "status": "이전",
+    "changes": [
+      "부모+하위=1개 카운트, 목록/Top3 모두 하위 표시",
+      "Top3 1개인데 최대3개 박스 뜨던 버그 수정"
     ]
   },
   {
@@ -17,54 +23,7 @@
     "date": "2026-09-27",
     "status": "이전",
     "changes": [
-      "오늘 풀: ▲ 버튼 = Top3로 올리기 (드래그 안해도 됨)",
-      "오늘 풀: ✕ 버튼 = 목록에서만 제외 (Todoist에서는 삭제 안됨)",
-      "오늘 풀에서 완료(v) 제거 - 완료는 Top3에서만",
-      "지금 하는 3개: ✓ = Todoist 완료(close) + 날짜별 완료에 기록",
-      "지금 하는 3개: ✕ = 목록에서만 제외",
-      "드래그 버그 수정 - top-container를 droppable로 등록해서 빈 영역에도 드랍 가능",
-      "Todoist 410 에러 수정 - Worker에서 v9/v2 -> v1 강제 치환",
-      "빌드 히스토리: changelog.json에서 자동 로드 (깃 커밋 로그 fallback)",
-      "프록시 고정: https://todoist-proxy.apoco211.workers.dev/"
-    ]
-  },
-  {
-    "version": "v1.15",
-    "date": "2026-09-27",
-    "status": "성공",
-    "changes": [
-      "프록시 https://todoist-proxy.apoco211.workers.dev/ 고정",
-      "Load failed 상세 에러 표시 추가",
-      "iOS safe-area-inset-top 12px 적용"
-    ]
-  },
-  {
-    "version": "v1.14.2",
-    "date": "2026-09-27",
-    "status": "성공",
-    "changes": [
-      "Todoist API today|overdue 필터 적용",
-      "PWA 토큰 저장소 분리 이슈 수정",
-      "야간모드 대비 색상 수정"
-    ]
-  },
-  {
-    "version": "v1.14.1",
-    "date": "2026-09-27",
-    "status": "성공",
-    "changes": [
-      "하위업무 breadcrumb 표시",
-      "다크모드 토글",
-      "체크리스트 UI 개선"
-    ]
-  },
-  {
-    "version": "v1.11",
-    "date": "2026-09-26",
-    "status": "성공",
-    "changes": [
-      "today|overdue 필터로 12개 복구",
-      "Top3 드래그 정렬 기능"
+      "▲=Top3로 올리기 / ✕=목록만 제외 분리, 드래그 droppable 수정, 410 v1 fix"
     ]
   }
 ]
