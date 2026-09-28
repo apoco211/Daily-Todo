@@ -4,7 +4,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS } from "@dnd-kit/utilities"
 
 const PROXY = "https://todoist-proxy.apoco211.workers.dev"
-const VERSION = "v1.18.7"
+const VERSION = "v1.18.8"
 
 const HOLIDAYS_2026 = {
   "01-01":"신정","02-16":"설날","02-17":"설날","02-18":"설날",
@@ -26,26 +26,31 @@ function getRootId(task, taskMap) {
   return cur?.id || task.id
 }
 
-function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, expanded, onToggle, onMoveTop, onMoveDown, onComplete, onDelete, childrenList }) {
+function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, expanded, onToggle, onMoveTop, onMoveDown, onComplete, onDelete, childrenList, descExpanded, onToggleDesc }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id })
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging? 0.6 : 1, zIndex: isDragging? 20 : 0 }
   let cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-white border border-gray-200"
   if (isTop) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-blue-100 border-2 border-blue-300 dark:bg-blue-900/40 dark:border-blue-400"
   if (isCandidate) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-yellow-50 border-2 border-yellow-200 dark:bg-amber-900/30 dark:border-yellow-400/60"
   if (!isTop &&!isCandidate) cardClass = "rounded-lg p-2.5 flex flex-col gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700"
+  const hasDesc =!!(task.description && task.description.trim().length>0)
   return (
     <div ref={setNodeRef} style={style} className={`${cardClass} relative`}>
       {isCandidate && <span className="absolute -top-1.5 -right-1.5 text-[8px] bg-amber-400 text-amber-900 px-1.5 py-0.5 rounded-full font-bold shadow">다음 후보</span>}
       <div className="flex items-center gap-1.5">
         <button {...attributes} {...listeners} style={{ touchAction: 'none' }} className="w-8 h-8 flex items-center justify-center text-gray-400 dark:text-gray-300 cursor-grab text-[16px] touch-none select-none shrink-0">≡</button>
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 cursor-pointer" onClick={()=>{ if(hasDesc) onToggleDesc(task.id) }} onTouchStart={e=>{ if(hasDesc) e.stopPropagation() }}>
           {parentContent && <div className="text-[10px] text-gray-500 dark:text-gray-400 leading-none mb-0.5 truncate">{parentContent} ▸</div>}
-          <div className="text-[13px] leading-tight text-gray-900 dark:text-white truncate font-medium">{task.content}</div>
+          <div className="flex items-center gap-1">
+            <div className="text-[13px] leading-tight text-gray-900 dark:text-white truncate font-medium flex-1">{task.content}</div>
+            {hasDesc && <span className="text-[10px] text-gray-400 dark:text-gray-500 shrink-0">📝</span>}
+          </div>
           {hasChildren &&!isTop &&!expanded && <div className="text-[10px] text-gray-500 dark:text-gray-400">{childrenList?.length}개 하위</div>}
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
           {!isTop? (
             <>
+              <button onTouchStart={e => e.stopPropagation()} onClick={() => onComplete(task.id)} className="w-7 h-7 bg-black dark:bg-white text-white dark:text-black rounded-md text-[11px] font-bold">✓</button>
               <button onTouchStart={e => e.stopPropagation()} onClick={() => onMoveTop(task.id)} className="w-7 h-7 bg-blue-500 text-white rounded-md text-[11px] font-bold">▲</button>
               {hasChildren && <button onTouchStart={e => e.stopPropagation()} onClick={() => onToggle(task.id)} className="w-7 h-7 bg-gray-200 dark:bg-gray-600 dark:text-white rounded-md text-[10px]">{expanded? '▲' : '▼'}</button>}
               <button onTouchStart={e => e.stopPropagation()} onClick={() => onDelete(task.id)} className="w-7 h-7 bg-gray-100 dark:bg-gray-700 dark:text-white rounded-md text-[10px]">✕</button>
@@ -58,17 +63,37 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
           )}
         </div>
       </div>
+      {hasDesc && descExpanded && (
+        <div onTouchStart={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()} className="mt-1.5 ml-9 mr-1 p-2.5 rounded-lg bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 select-text">
+          <div className="text-[11px] text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words select-text leading-relaxed" style={{ WebkitUserSelect: 'text', userSelect: 'text' }}>
+            {task.description}
+          </div>
+          <div className="text-[9px] text-gray-400 dark:text-gray-500 mt-1.5">필요한 부분만 드래그해서 복사</div>
+        </div>
+      )}
       {!isTop && expanded && childrenList?.length > 0 && (
         <div className="ml-5 pl-2.5 border-l-2 border-gray-300 dark:border-gray-600 flex flex-col gap-1 mt-1">
-          {childrenList.map(child => (
-            <div key={child.id} className="flex items-center justify-between py-1.5 bg-gray-50 dark:bg-gray-900/50 rounded px-2">
-              <div className="min-w-0 flex-1"><div className="text-[10px] text-gray-400 dark:text-gray-500 truncate">{task.content} ▸</div><div className="text-[12px] text-gray-800 dark:text-gray-200 truncate">{child.content}</div></div>
-              <div className="flex gap-1 ml-2">
-                <button onClick={() => onComplete(child.id)} className="w-7 h-7 bg-black dark:bg-white text-white dark:text-black rounded text-[10px]">✓</button>
-                <button onClick={() => onMoveTop(child.id)} className="w-7 h-7 bg-blue-500 text-white rounded text-[9px]">▲</button>
+          {childrenList.map(child => {
+            const childHasDesc =!!(child.description && child.description.trim().length>0)
+            return (
+            <div key={child.id} className="flex flex-col gap-1 py-1.5 bg-gray-50 dark:bg-gray-900/50 rounded px-2">
+              <div className="flex items-center justify-between">
+                <div className="min-w-0 flex-1 cursor-pointer" onClick={()=>{ if(childHasDesc) onToggleDesc(child.id) }}>
+                  <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate flex items-center gap-1">{task.content} ▸ {childHasDesc && <span>📝</span>}</div>
+                  <div className="text-[12px] text-gray-800 dark:text-gray-200 truncate">{child.content}</div>
+                </div>
+                <div className="flex gap-1 ml-2">
+                  <button onClick={() => onComplete(child.id)} className="w-7 h-7 bg-black dark:bg-white text-white dark:text-black rounded text-[10px]">✓</button>
+                  <button onClick={() => onMoveTop(child.id)} className="w-7 h-7 bg-blue-500 text-white rounded text-[9px]">▲</button>
+                </div>
               </div>
+              {childHasDesc && descExpanded && (
+                <div onTouchStart={e=>e.stopPropagation()} className="p-2 rounded bg-white dark:bg-gray-800 border dark:border-gray-700 select-text">
+                  <div className="text-[11px] text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words select-text">{child.description}</div>
+                </div>
+              )}
             </div>
-          ))}
+          )})}
         </div>
       )}
       {isTop && childrenList?.length > 0 && (
@@ -76,7 +101,7 @@ function SortableItem({ task, parentContent, isTop, isCandidate, hasChildren, ex
           <div className="text-[9px] text-blue-700 dark:text-blue-300">{childrenList.length}개 하위 포함 (1그룹)</div>
           {childrenList.map(ch => (
             <div key={ch.id} className="flex items-center justify-between bg-white/70 dark:bg-gray-800/70 rounded px-2 py-1">
-              <span className="text-[11px] text-gray-800 dark:text-gray-100 truncate flex-1">• {ch.content}</span>
+              <span className="text-[11px] text-gray-800 dark:text-gray-100 truncate flex-1">• {ch.content}{ch.description? " 📝":""}</span>
               <button onClick={() => onComplete(ch.id)} className="ml-2 w-6 h-6 bg-black dark:bg-white text-white dark:text-black rounded text-[9px]">✓</button>
             </div>
           ))}
@@ -107,6 +132,7 @@ export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem("todoist_token") || "")
   const [activeTab, setActiveTab] = useState("today")
   const [expandedIds, setExpandedIds] = useState(new Set())
+  const [descExpandedIds, setDescExpandedIds] = useState(new Set())
   const [dark, setDark] = useState(() => localStorage.getItem("dark") === "true")
   const [newContent, setNewContent] = useState("")
   const [newPri, setNewPri] = useState(1)
@@ -143,11 +169,9 @@ export default function App() {
       label = `[${holiday}]`
     } else if(isSat){
       weekColor = "text-blue-600 dark:text-blue-400"
-      labelColor = "text-blue-600 dark:text-blue-400"
       label = "[주말]"
     } else if(isSun){
       weekColor = "text-red-600 dark:text-red-400"
-      labelColor = "text-blue-600 dark:text-blue-400"
       label = "[주말]"
     } else {
       label = "[평일]"
@@ -366,13 +390,17 @@ export default function App() {
               setTop3Ids(prev => arrayMove(prev, prev.indexOf(active.id), prev.indexOf(over.id)))
             }
           }}>
-            <div className="flex flex-col gap-1.5"><div className="text-[12px] font-bold text-gray-900 dark:text-white">🎯 Top3 ({getTop3GroupCount()}/3) <span className="text-[10px] font-normal text-blue-600 dark:text-blue-300 ml-1">파란색 - 로컬 최종</span></div><TopDrop isOver={isOverTop}><SortableContext items={top3Ids} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{top3Ids.length === 0? <div className="text-center text-gray-400 dark:text-gray-500 text-[12px] py-6">▲로 올리기</div> : top3Ids.map(id => { const t = taskMap[id]; if (!t) return null; const parentName = t.parent_id && taskMap[t.parent_id]? taskMap[t.parent_id].content : undefined; return <SortableItem key={id} task={t} parentContent={parentName} isTop={true} hasChildren={getChildren(id).length > 0} childrenList={getChildren(id)} onComplete={completeTask} onMoveDown={moveDown} onDelete={deleteLocal} /> })}</div></SortableContext></TopDrop></div>
-            <div className="flex flex-col gap-1.5 mt-1"><div className="text-[12px] font-bold text-gray-900 dark:text-white">📋 오늘 풀 ({poolTasks.length}) <span className="text-[10px] font-normal text-amber-600 dark:text-amber-300 ml-1">노란색 상위3 / 스크롤 가능 / 순서 저장됨</span></div><SortableContext items={poolTasks.map(t => t.id)} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{poolTasks.map((t, idx) => { const children = getChildren(t.id); return <SortableItem key={t.id} task={t} isCandidate={idx < 3} hasChildren={children.length > 0} expanded={expandedIds.has(t.id)} childrenList={children} onToggle={pid => setExpandedIds(s => { const n = new Set(s); n.has(pid)? n.delete(pid) : n.add(pid); return n })} onMoveTop={moveToTop} onDelete={deleteLocal} onComplete={completeTask} /> })}</div></SortableContext></div>
+            <div className="flex flex-col gap-1.5"><div className="text-[12px] font-bold text-gray-900 dark:text-white">🎯 Top3 ({getTop3GroupCount()}/3) <span className="text-[10px] font-normal text-blue-600 dark:text-blue-300 ml-1">파란색 - 몸통 터치시 설명</span></div><TopDrop isOver={isOverTop}><SortableContext items={top3Ids} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{top3Ids.length === 0? <div className="text-center text-gray-400 dark:text-gray-500 text-[12px] py-6">▲로 올리기</div> : top3Ids.map(id => { const t = taskMap[id]; if (!t) return null; const parentName = t.parent_id && taskMap[t.parent_id]? taskMap[t.parent_id].content : undefined; return <SortableItem key={id} task={t} parentContent={parentName} isTop={true} hasChildren={getChildren(id).length > 0} childrenList={getChildren(id)} onComplete={completeTask} onMoveDown={moveDown} onDelete={deleteLocal} descExpanded={descExpandedIds.has(t.id)} onToggleDesc={tid=>setDescExpandedIds(s=>{const n=new Set(s); n.has(tid)?n.delete(tid):n.add(tid); return n})} /> })}</div></SortableContext></TopDrop></div>
+            <div className="flex flex-col gap-1.5 mt-1"><div className="text-[12px] font-bold text-gray-900 dark:text-white">📋 오늘 풀 ({poolTasks.length}) <span className="text-[10px] font-normal text-amber-600 dark:text-amber-300 ml-1">노란 상위3 / 풀에서 바로 ✓ / 설명 📝</span></div><SortableContext items={poolTasks.map(t => t.id)} strategy={verticalListSortingStrategy}><div className="flex flex-col gap-1.5">{poolTasks.map((t, idx) => { const children = getChildren(t.id); return <SortableItem key={t.id} task={t} isCandidate={idx < 3} hasChildren={children.length > 0} expanded={expandedIds.has(t.id)} childrenList={children} onToggle={pid => setExpandedIds(s => { const n = new Set(s); n.has(pid)? n.delete(pid) : n.add(pid); return n })} onMoveTop={moveToTop} onDelete={deleteLocal} onComplete={completeTask} descExpanded={descExpandedIds.has(t.id)} onToggleDesc={tid=>setDescExpandedIds(s=>{const n=new Set(s); n.has(tid)?n.delete(tid):n.add(tid); return n})} /> })}</div></SortableContext></div>
             <DragOverlay>{activeId? <div className="rounded-lg p-3 bg-white dark:bg-gray-800 border-2 border-blue-500 shadow-2xl text-[13px] text-gray-900 dark:text-white rotate-1">{taskMap[activeId]?.content}</div> : null}</DragOverlay>
           </DndContext>
         </div>}
         {activeTab === "history" && <div className="flex-1 overflow-auto p-2">{groupedLogs.map(([date, items]) => <div key={date} className="border dark:border-gray-700 rounded-lg p-2 bg-gray-50 dark:bg-gray-800/50 mb-2"><div className="font-bold text-[11px] mb-1 text-gray-900 dark:text-white">{date} ({items.length})</div><div className="flex flex-col gap-1">{items.map(it => <div key={it.id + "_" + it.completedAt} className="text-[12px] bg-white dark:bg-gray-900 rounded p-1.5 border dark:border-gray-700 flex justify-between text-gray-900 dark:text-gray-100"><span className="truncate">{it.content}</span></div>)}</div></div>)}</div>}
-        {activeTab === "changelog" && <div className="p-2 text-[11px] text-gray-700 dark:text-gray-300">v1.18.7 - 헤더에 오늘 날짜+요일+평일/주말/공휴일 표시, 공휴일이면 빨강, 디자인 유지</div>}
+        {activeTab === "changelog" && <div className="p-2 text-[11px] text-gray-700 dark:text-gray-300">
+          <div>v1.18.8 - 풀에서 바로 ✓ 완료 + 할일 몸통 터치시 설명 보기 + 부분 드래그 복사, 공휴일 빨강</div>
+          <div className="mt-1">v1.18.7 - 헤더 날짜+요일+평일/주말/공휴일</div>
+          <div>v1.18.6 - PWA 백업</div>
+        </div>}
       </div>
     </div>
   )
