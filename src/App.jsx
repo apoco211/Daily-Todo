@@ -4,7 +4,16 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS } from "@dnd-kit/utilities"
 
 const PROXY = "https://todoist-proxy.apoco211.workers.dev"
-const VERSION = "v1.18.6"
+const VERSION = "v1.18.7"
+
+const HOLIDAYS_2026 = {
+  "01-01":"신정","02-16":"설날","02-17":"설날","02-18":"설날",
+  "03-01":"삼일절","03-02":"삼일절","05-05":"어린이날",
+  "05-24":"부처님오신날","05-25":"부처님오신날",
+  "06-06":"현충일","08-15":"광복절","08-17":"광복절",
+  "09-24":"추석","09-25":"추석","09-26":"추석",
+  "10-03":"개천절","10-05":"개천절","10-09":"한글날","12-25":"크리스마스"
+}
 
 function getRootId(task, taskMap) {
   if (!task) return null
@@ -115,6 +124,44 @@ export default function App() {
 
   const taskMap = useMemo(() => { const m = {}; tasks.forEach(t => m[t.id] = t); return m }, [tasks])
 
+  const dateInfo = useMemo(()=>{
+    const now = new Date()
+    const y = now.getFullYear(), m = now.getMonth()+1, d = now.getDate()
+    const dayIdx = now.getDay()
+    const week = ["일","월","화","수","목","금","토"][dayIdx]
+    const key = `${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`
+    const holiday = HOLIDAYS_2026[key]
+    const isSat = dayIdx===6, isSun = dayIdx===0
+
+    let weekColor = "text-gray-900 dark:text-white"
+    let labelColor = "text-blue-600 dark:text-blue-400"
+    let label = ""
+
+    if(holiday){
+      weekColor = "text-red-600 dark:text-red-400"
+      labelColor = "text-red-600 dark:text-red-400"
+      label = `[${holiday}]`
+    } else if(isSat){
+      weekColor = "text-blue-600 dark:text-blue-400"
+      labelColor = "text-blue-600 dark:text-blue-400"
+      label = "[주말]"
+    } else if(isSun){
+      weekColor = "text-red-600 dark:text-red-400"
+      labelColor = "text-blue-600 dark:text-blue-400"
+      label = "[주말]"
+    } else {
+      label = "[평일]"
+    }
+
+    return {
+      dateText: `${y}년 ${m}월${d}일`,
+      weekText: `(${week})`,
+      weekColor,
+      label,
+      labelColor,
+    }
+  }, [])
+
   useEffect(() => {
     if(top3Ids.length>0){
       localStorage.setItem("top3Ids", JSON.stringify(top3Ids))
@@ -150,7 +197,6 @@ export default function App() {
       ;[...todays,...childResults.flat()].forEach(t => { merged[t.id] = t })
       let all = Object.values(merged)
 
-      // v1.18.6: localStorage 직접 읽기 + 백업에서 복구 (PWA 장기 보관)
       const savedPoolRaw = localStorage.getItem("poolOrder")
       const savedPoolBackupRaw = localStorage.getItem("poolOrder_backup")
       const savedPoolParsed = JSON.parse(savedPoolRaw || "[]")
@@ -189,14 +235,12 @@ export default function App() {
         return dedup.slice(0, 3)
       })
 
-      // 신규 업무는 맨 앞에 추가 - 절대 빈 배열로 덮어쓰기 금지
       const existingIds = new Set([...savedPool,...savedTop])
       const newIds = all.filter(t =>!t.parent_id ||!merged[t.parent_id]).filter(t =>!existingIds.has(t.id) &&!topRootsSet.has(t.id) &&!topRootsSet.has(getRootId(t, merged))).map(t => t.id)
       if (newIds.length > 0) {
         const updated = [...newIds,...savedPool]
         if (updated.length > 0) setPoolOrder(updated)
       } else if (savedPool.length > 0 && poolOrder.length === 0) {
-        // PWA가 오래 닫혀서 state가 비었으면 백업에서 복구
         setPoolOrder(savedPool)
       }
 
@@ -281,8 +325,16 @@ export default function App() {
     <div className={`min-h-screen bg-gray-50 dark:bg-gray-950 flex justify-center ${dark? 'dark' : ''}`}>
       <div className="w-full max-w-[430px] bg-white dark:bg-gray-900 min-h-screen shadow-xl flex flex-col" style={{ paddingTop: "env(safe-area-inset-top)" }}>
         <header className="flex justify-between items-center px-3 py-2.5 border-b dark:border-gray-800">
-          <div className="font-bold text-[14px] text-gray-900 dark:text-white">{VERSION} - 최종저장</div>
-          <div className="flex gap-1.5"><button onClick={() => setShowToken(!showToken)} className="w-7 h-7 rounded-full bg-gray-100 dark:bg-gray-800 text-[12px]">⚙️</button><button onClick={() => setDark(!dark)} className="w-7 h-7 rounded-full bg-gray-100 dark:bg-gray-800 text-[12px]">{dark? '☀️' : '🌙'}</button></div>
+          <div className="text-[10px] font-bold text-gray-400 dark:text-gray-500 shrink-0">{VERSION}</div>
+          <div className="flex-1 text-center text-[15px] font-bold">
+            <span className="text-gray-900 dark:text-white">{dateInfo.dateText} </span>
+            <span className={dateInfo.weekColor}>{dateInfo.weekText}</span>
+            <span className={`${dateInfo.labelColor} text-[12px] ml-1.5`}>{dateInfo.label}</span>
+          </div>
+          <div className="flex gap-1.5 shrink-0">
+            <button onClick={() => setShowToken(!showToken)} className="w-7 h-7 rounded-full bg-gray-100 dark:bg-gray-800 text-[12px]">⚙️</button>
+            <button onClick={() => setDark(!dark)} className="w-7 h-7 rounded-full bg-gray-100 dark:bg-gray-800 text-[12px]">{dark? '☀️' : '🌙'}</button>
+          </div>
         </header>
         {showToken && (
           <div className="p-2.5 bg-gray-50 dark:bg-gray-800 border-b dark:border-gray-700 flex flex-col gap-2">
@@ -320,7 +372,7 @@ export default function App() {
           </DndContext>
         </div>}
         {activeTab === "history" && <div className="flex-1 overflow-auto p-2">{groupedLogs.map(([date, items]) => <div key={date} className="border dark:border-gray-700 rounded-lg p-2 bg-gray-50 dark:bg-gray-800/50 mb-2"><div className="font-bold text-[11px] mb-1 text-gray-900 dark:text-white">{date} ({items.length})</div><div className="flex flex-col gap-1">{items.map(it => <div key={it.id + "_" + it.completedAt} className="text-[12px] bg-white dark:bg-gray-900 rounded p-1.5 border dark:border-gray-700 flex justify-between text-gray-900 dark:text-gray-100"><span className="truncate">{it.content}</span></div>)}</div></div>)}</div>}
-        {activeTab === "changelog" && <div className="p-2 text-[11px] text-gray-700 dark:text-gray-300">v1.18.6 - PWA 장기 보관: poolOrder/top3Ids 백업 키 추가, iOS가 localStorage 비워도 백업에서 복구, 절대 빈 배열로 덮어쓰기 금지, 다크모드 글씨 수정 포함</div>}
+        {activeTab === "changelog" && <div className="p-2 text-[11px] text-gray-700 dark:text-gray-300">v1.18.7 - 헤더에 오늘 날짜+요일+평일/주말/공휴일 표시, 공휴일이면 빨강, 디자인 유지</div>}
       </div>
     </div>
   )
