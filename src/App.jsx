@@ -4,7 +4,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } 
 import { CSS } from "@dnd-kit/utilities"
 
 const PROXY = "https://todoist-proxy.apoco211.workers.dev"
-const VERSION = "v1.19.0"
+const VERSION = "v1.19.1"
 
 const HOLIDAYS_2026 = {"01-01":"신정","02-16":"설날","02-17":"설날","02-18":"설날","03-01":"삼일절","03-02":"삼일절","05-05":"어린이날","05-24":"부처님오신날","05-25":"부처님오신날","06-06":"현충일","08-15":"광복절","08-17":"광복절","09-24":"추석","09-25":"추석","09-26":"추석","10-03":"개천절","10-05":"개천절","10-09":"한글날","12-25":"크리스마스"}
 
@@ -71,11 +71,10 @@ export default function App(){
 
   const fetchTasks=async(tok)=>{
     const useToken=tok||tmpToken||token||localStorage.getItem("todoist_token")||""
-    if(!useToken){alert("토큰이 없습니다. 설정에서 토큰을 저장하세요");return}
-    console.log("fetchTasks with token", useToken.slice(0,10))
+    if(!useToken){alert("토큰이 없습니다");return}
     try{
       const res=await fetch(`${PROXY}/api/v1/tasks/filter?query=today%20|%20overdue`,{headers:{Authorization:`Bearer ${useToken}`}})
-      if(!res.ok){const txt=await res.text();alert(`불러오기 실패 ${res.status}: ${txt.slice(0,200)}`);return}
+      if(!res.ok){alert(`불러오기 실패 ${res.status}`);return}
       const data=await res.json();const todays=data.results||data.tasks||data||[]
       const childResults=await Promise.all(todays.map(async t=>{try{const r=await fetch(`${PROXY}/api/v1/tasks?parent_id=${t.id}`,{headers:{Authorization:`Bearer ${useToken}`}});const d=await r.json();return d.results||d.tasks||(Array.isArray(d)?d:[])}catch{return[]}}))
       const merged={};[...todays,...childResults.flat()].forEach(t=>{merged[t.id]=t});let all=Object.values(merged)
@@ -84,7 +83,7 @@ export default function App(){
       if(savedPool.length>0){const orderMap=new Map(savedPool.map((id,idx)=>[id,idx]));all=[...all].sort((a,b)=>{if(topRootsSet.has(a.id)||topRootsSet.has(getRootId(a,merged)))return 9998;if(topRootsSet.has(b.id)||topRootsSet.has(getRootId(b,merged)))return 9998;const aIdx=orderMap.has(a.id)?orderMap.get(a.id):9999;const bIdx=orderMap.has(b.id)?orderMap.get(b.id):9999;return aIdx-bIdx})}
       setTasks(all)
       setTop3Ids(prev=>{const cur=prev.length?prev:savedTop;const filtered=cur.filter(id=>merged[id]);const seen=new Set();const dedup=[];for(const id of filtered){const root=getRootId(merged[id],merged);if(!seen.has(root)){seen.add(root);dedup.push(id)}}return dedup.slice(0,3)})
-    }catch(e){console.error(e);alert("불러오기 에러: "+e.message)}
+    }catch(e){alert("불러오기 에러: "+e.message)}
   }
 
   const fetchCompleted=async()=>{if(!token)return;try{const since=new Date(Date.now()-7*86400000).toISOString();const res=await fetch(`${PROXY}/api/v1/completed/get_all?since=${encodeURIComponent(since)}&limit=100`,{headers:{Authorization:`Bearer ${token}`}});const data=await res.json();setCompletedFromTodoist(data.items||[])}catch{}}
@@ -97,22 +96,26 @@ export default function App(){
   const deleteLocal=(id)=>{const toRemove=new Set([id]);tasks.forEach(t=>{if(t.parent_id===id)toRemove.add(t.id)});setTasks(p=>p.filter(t=>!toRemove.has(t.id)));setTop3Ids(p=>p.filter(t=>!toRemove.has(t)));setPoolOrder(p=>p.filter(t=>!toRemove.has(t)))}
   const completeTask=async(id)=>{const t=taskMap[id];if(!t)return;const toComplete=getChildren(id).length?[t,...getChildren(id)]:[t];try{for(const c of toComplete){await fetch(`${PROXY}/api/v1/tasks/${c.id}/close`,{method:"POST",headers:{Authorization:`Bearer ${token}`}})}}catch(e){console.error(e)}const now=new Date();const dk=now.toISOString().slice(0,10);setLogs(p=>[...toComplete.map(x=>({id:x.id,content:x.content,completedAt:now.toISOString(),dateKey:dk})),...p]);const rem=new Set(toComplete.map(x=>x.id));setTasks(p=>p.filter(x=>!rem.has(x.id)));setTop3Ids(p=>p.filter(x=>!rem.has(x)));setPoolOrder(p=>p.filter(x=>!rem.has(x)))}
 
+  // ★ 핵심 수정: 오늘 날짜 + 중요도 함께 Todoist로 넘어감
   const addTask=async()=>{
-    if(!newContent.trim()){alert("내용을 입력하세요");return}
+    if(!newContent.trim()){alert("내용 입력");return}
     const useToken=tmpToken||token||localStorage.getItem("todoist_token")||""
     if(!useToken){alert("토큰 없음");return}
     try{
-      console.log("addTask", newContent)
-      const body={content:newContent, priority:newPri, due_string:"today", due_lang:"ko"}
+      const body={
+        content: newContent,
+        priority: newPri,
+        due_string: "today",
+        due_lang: "ko",
+        due: { string: "today", lang: "ko" }
+      }
       if(newParent) body.parent_id=newParent
       const res=await fetch(`${PROXY}/api/v1/tasks`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${useToken}`},body:JSON.stringify(body)})
       if(!res.ok){const txt=await res.text();alert(`추가 실패 ${res.status}: ${txt.slice(0,300)}`);return}
       const created=await res.json()
-      console.log("created", created)
       setTasks(p=>[created,...p]);setPoolOrder(p=>[created.id,...p]);setNewContent("");setNewParent("")
-      // 즉시 fetch해서 Todoist 반영 확인
       setTimeout(()=>fetchTasks(useToken),500)
-    }catch(e){console.error(e);alert("추가 에러: "+e.message)}
+    }catch(e){alert("추가 에러: "+e.message)}
   }
 
   const topRoots=useMemo(()=>{const s=new Set();top3Ids.forEach(id=>{const t=taskMap[id];if(t)s.add(getRootId(t,taskMap))});return s},[top3Ids,taskMap])
@@ -134,7 +137,7 @@ export default function App(){
             <button onClick={()=>setDark(!dark)} className="w-5 h-5 rounded-full bg-gray-100 dark:bg-gray-800 text-[9px]">{dark?'☀️':'🌙'}</button>
           </div>
         </header>
-        {showToken && <div className="p-1.5 bg-gray-50 dark:bg-gray-800 border-b flex flex-col gap-1"><div className="flex gap-1"><input type="password" value={tmpToken} onChange={e=>setTmpToken(e.target.value)} placeholder="Todoist API 토큰" className="flex-1 px-2 py-1 rounded border text-[9px] dark:bg-gray-700 dark:text-white"/><button onClick={()=>{localStorage.setItem("todoist_token",tmpToken);setToken(tmpToken);setShowToken(false);setTimeout(()=>fetchTasks(tmpToken),300)}} className="bg-black text-white px-2 rounded text-[9px]">저장&불러오기</button></div><div className="flex gap-1"><button onClick={()=>fetchTasks()} className="flex-1 bg-blue-500 text-white py-1 rounded text-[9px]">🔄 다시 불러오기 (순서 유지)</button><button onClick={()=>{setTmpToken("");localStorage.removeItem("todoist_token");setToken("");setTasks([])}} className="flex-1 bg-gray-200 py-1 rounded text-[9px]">토큰 삭제</button></div><div className="text-[7px] text-gray-500">※ 저장 누르면 바로 불러오기 실행됨</div></div>}
+        {showToken && <div className="p-1.5 bg-gray-50 dark:bg-gray-800 border-b flex flex-col gap-1"><div className="flex gap-1"><input type="password" value={tmpToken} onChange={e=>setTmpToken(e.target.value)} placeholder="토큰" className="flex-1 px-2 py-1 rounded border text-[9px] dark:bg-gray-700 dark:text-white"/><button onClick={()=>{localStorage.setItem("todoist_token",tmpToken);setToken(tmpToken);setShowToken(false);setTimeout(()=>fetchTasks(tmpToken),300)}} className="bg-black text-white px-2 rounded text-[9px]">저장&불러오기</button></div><div className="flex gap-1"><button onClick={()=>fetchTasks()} className="flex-1 bg-blue-500 text-white py-1 rounded text-[9px]">🔄 다시 불러오기</button><button onClick={()=>{setTmpToken("");localStorage.removeItem("todoist_token");setToken("");setTasks([])}} className="flex-1 bg-gray-200 py-1 rounded text-[9px]">토큰 삭제</button></div></div>}
         <div className="flex border-b">{["today","history","changelog"].map(tab=><button key={tab} onClick={()=>setActiveTab(tab)} className={`flex-1 py-1 text-[10px] ${activeTab===tab?'border-b-2 border-black font-bold':'text-gray-500'}`}>{tab==="today"?"오늘 할 일":tab==="history"?"날짜별 완료":"히스토리"}</button>)}</div>
         {activeTab==="today" && <div className="flex-1 overflow-auto p-1 flex flex-col gap-1.5">
           <div className="flex gap-0.5"><input value={newContent} onChange={e=>setNewContent(e.target.value)} onKeyDown={e=>{if(e.key==='Enter') addTask()}} placeholder="추가업무 (엔터)" className="flex-1 px-2 py-1 rounded border bg-blue-50/50 text-[10px]"/><select value={newPri} onChange={e=>setNewPri(Number(e.target.value))} className="px-1 rounded border text-[9px]"><option value={1}>P4</option><option value={2}>P3</option><option value={3}>P2</option><option value={4}>P1</option></select><select value={newParent} onChange={e=>setNewParent(e.target.value)} className="px-1 rounded border text-[9px] max-w-[60px]"><option value="">부모없음</option>{tasks.filter(t=>!t.parent_id).map(t=><option key={t.id} value={t.id}>{t.content.slice(0,10)}</option>)}</select><button onClick={addTask} className="bg-blue-500 text-white px-2 rounded text-[11px]">+</button></div>
@@ -145,7 +148,7 @@ export default function App(){
           </DndContext>
         </div>}
         {activeTab==="history"&&<div className="flex-1 overflow-auto p-1">{groupedLogs.map(([date,items])=><div key={date} className="border rounded p-1 bg-gray-50 mb-1"><div className="font-bold text-[9px] mb-0.5">{date} ({items.length})</div><div className="flex flex-col gap-0.5">{items.map(it=><div key={it.id+"_"+it.completedAt} className="text-[10px] bg-white rounded px-1 py-0.5 border truncate">{it.content}</div>)}</div></div>)}</div>}
-        {activeTab==="changelog"&&<div className="p-1 text-[9px]"><div>v1.19.0 - 추가/다시불러오기 버그 FIX</div><div>v1.18.9 - 컴팩트</div><div>v1.18.8 - 풀 바로완료 + 설명보기</div></div>}
+        {activeTab==="changelog"&&<div className="p-1 text-[9px]"><div>v1.19.1 - 오늘 날짜 지정 FIX (보관함→오늘)</div><div>v1.19.0 - 추가/다시불러오기 FIX</div></div>}
       </div>
     </div>
   )
