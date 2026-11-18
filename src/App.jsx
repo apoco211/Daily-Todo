@@ -20,7 +20,7 @@ const SUPABASE_HEADERS = {
 };
 
 const PROXY = "https://todoist-proxy.apoco211.workers.dev";
-const VERSION = "v1.22.3 (AI Meta-Sync)";
+const VERSION = "v1.23.0 (Inbox Triage)";
 
 const HOLIDAYS_2026 = {
   "01-01":"신정","02-16":"설날","02-17":"설날","02-18":"설날",
@@ -229,6 +229,201 @@ function FocusDrop({ children, isOver }) {
   const { setNodeRef } = useDroppable({ id: "focus-container" });
   return <div ref={setNodeRef} className={`rounded-lg border border-dashed p-1 min-h-[50px] transition-colors ${isOver ? 'border-purple-500 bg-purple-50/50 dark:bg-purple-900/20' : 'border-purple-300 dark:border-purple-700'}`}>{children}</div>;
 }
+
+
+// ==========================================
+// [NEW v1.23.0] 수집함 Inbox - Gmail x2 / Kakao paste / YouTube liked
+// 원칙: (1) 후보 단계에서는 Todoist에 절대 전송하지 않음. 사용자가 최종 선택한 것만 Todoist+오늘 풀에 백업
+// (2) Gmail/YouTube 토큰은 localStorage에만 저장, 원문은 임시 저장만. 확정된 할일/요약만 Supabase/Todoist로 이동
+// (3) Gmail 로그인은 브라우저 구글 세션에 의존하지 않고, 프록시 경유 OAuth 토큰 분리 저장 + select_account
+// (4) 삭제는 즉시 완전삭제가 아니라 Gmail 휴지통 이동 + 확인창 1회
+// 프록시 기대 엔드포인트(Cloudflare Worker에 추가 필요):
+//  GET  {PROXY}/gmail/auth-url?slot=1|2  -> {url}  (scope: gmail.readonly gmail.modify, youtube.readonly, prompt=consent&select_account)
+//  POST {PROXY}/gmail/exchange {code,slot} -> {access_token,refresh_token,email,expires_in}
+//  GET  {PROXY}/gmail/list?slot=..&q=..&max=50 -> {messages:[{id,from,subject,snippet,body,date,hasAttachment}]}
+///  POST {PROXY}/gmail/trash {slot,ids[]} -> {ok}
+//  GET  {PROXY}/youtube/liked?slot=.. -> {videos:[{id,title,channel,url,duration}]}
+///  POST {PROXY}/ai/classify {items:[{source,text}]} -> {results:[{category,taskTitle,taskDesc,deadline,priority,translatedTitle,translatedSummary,isImportantAlert,reason}]}
+// category: trash | task | info | doc | later
+const INBOX_LS_TOKENS="inbox_gmail_tokens_v1";
+const INBOX_LS_YT="inbox_youtube_token_v1";
+const INBOX_LS_ITEMS="inbox_items_v1";
+const INBOX_LS_ARCHIVE="inbox_archive_v1";
+const inboxLoad=(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch{return d}};
+const inboxSave=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}};
+const isMostlyEnglish=(s)=>{const en=(s||"").match(/[A-Za-z]/g)||[];const ko=(s||"").match(/[가-힣]/g)||[];return en.length>10&&en.length>ko.length*2;};
+const extractDeadline=(s)=>{if(!s) return "";const m1=s.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);if(m1) return `${m1[1]}-${String(m1[2]).padStart(2,"0")}-${String(m1[3]).padStart(2,"0")}`;const m2=s.match(/(\d{1,2})월\s*(\d{1,2})일/);if(m2) return `2026-${String(m2[1]).padStart(2,"0")}-${String(m2[2]).padStart(2,"0")}`;const m3=s.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})/i);if(m3){const mon={jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12"}[m3[1].toLowerCase().slice(0,3)];return `2026-${mon}-${String(m3[2]).padStart(2,"0")}`;}if(/내일/.test(s)) return "내일";if(/모레/.test(s)) return "모레";return "";};
+const localClassify=(source,text)=>{
+  const lower=(text||"").toLowerCase();
+  const urgent=/suspend|verify|payment failed|expire|security alert|정지|인증|결제 실패|만료|보안|verify|expired|action required/.test(text||"");
+  const deadline=extractDeadline(text||"");
+  if(/광고|unsubscribe|프로모션|세일|할인|newsletter|promotion/.test(text||"")) return {category:"trash",taskTitle:"",taskDesc:"",deadline:"",priority:"low",translatedTitle:"",translatedSummary:"",isImportantAlert:false,reason:"광고/프로모션 패턴"};
+  if(urgent||deadline||/까지|by |해야|해주세요|확인/.test(text||"")) return {category:"task",taskTitle:(text||"").split("\n")[0].slice(0,60),taskDesc:(text||"").slice(0,300),deadline,priority:urgent?"high":"normal",translatedTitle:"",translatedSummary:"",isImportantAlert:urgent,reason:urgent?"중요 알림 키워드 감지":"마감/요청 표현 감지"};
+  if(source==="youtube") return {category:"task",taskTitle:(text||"").slice(0,80),taskDesc:text||"",deadline:"",priority:"normal",translatedTitle:"",translatedSummary:"",isImportantAlert:false,reason:"시청할 영상 후보"};
+  return {category:"later",taskTitle:"",taskDesc:(text||"").slice(0,300),deadline:"",priority:"normal",translatedTitle:"",translatedSummary:"",isImportantAlert:false,reason:"수동 검토 필요"};
+};
+function InboxTab({onToast}){
+  const [gmailTokens,setGmailTokens]=useState(()=>inboxLoad(INBOX_LS_TOKENS,{}));
+  const [ytToken,setYtToken]=useState(()=>localStorage.getItem(INBOX_LS_YT)||"");
+  const [activeSlot,setActiveSlot]=useState("1");
+  const [sourceFilter,setSourceFilter]=useState("all");
+  const [catFilter,setCatFilter]=useState("all");
+  const [items,setItems]=useState(()=>inboxLoad(INBOX_LS_ITEMS,[]));
+  const [archive,setArchive]=useState(()=>inboxLoad(INBOX_LS_ARCHIVE,[]));
+  const [selected,setSelected]=useState(new Set());
+  const [expandedId,setExpandedId]=useState(null);
+  const [pasteText,setPasteText]=useState("");
+  const [pasteSource,setPasteSource]=useState("kakao");
+  const [loading,setLoading]=useState(false);
+  const [confirmTrash,setConfirmTrash]=useState(false);
+  const [gmailQuery,setGmailQuery]=useState("");
+  useEffect(()=>inboxSave(INBOX_LS_ITEMS,items),[items]);
+  useEffect(()=>inboxSave(INBOX_LS_ARCHIVE,archive),[archive]);
+  const todoistToken=()=>localStorage.getItem("todoist_token")||"";
+  const toast=(m)=>{if(onToast) onToast(m); else alert(m);};
+  const aiClassify=async(list)=>{
+    try{
+      const res=await fetch(`${PROXY}/ai/classify`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:list.map(x=>({source:x.source,text:x.rawText||x.title||""}))})});
+      if(!res.ok) throw new Error("proxy ai fail");
+      const d=await res.json(); return d.results||[];
+    }catch{ return list.map(x=>localClassify(x.source,x.rawText||x.title||"")); }
+  };
+  const addItems=async(rawList)=>{
+    setLoading(true);
+    const base=rawList.map((r,i)=>({id:`inbox_${Date.now()}_${i}_${Math.random().toString(36).slice(2,7)}`,source:r.source,slot:r.slot||"",title:r.title||"",from:r.from||"",date:r.date||"",snippet:r.snippet||"",body:r.body||"",rawText:r.rawText||`${r.title||""}\n${r.body||""}`,url:r.url||"",gmailId:r.gmailId||"",category:"later",taskTitle:"",taskDesc:"",deadline:"",priority:"normal",translatedTitle:"",translatedSummary:"",isImportantAlert:false,reason:"",status:"candidate",createdAt:new Date().toISOString()}));
+    const results=await aiClassify(base);
+    const merged=base.map((b,i)=>({...b,...(results[i]||{}),english:isMostlyEnglish(b.rawText)}));
+    setItems(p=>[...merged,...p]); setLoading(false); toast(`수집함 후보 ${merged.length}개 추가됨. 최종 선택한 것만 할 일로 이동돼요.`);
+  };
+  const connectGmail=async(slot)=>{
+    try{ const r=await fetch(`${PROXY}/gmail/auth-url?slot=${slot}`); const d=await r.json(); if(d.url) window.open(d.url,"_blank","width=520,height=640"); else toast("프록시에 /gmail/auth-url 를 먼저 추가해 주세요. (Worker 배포 필요)"); }catch{ toast("Gmail 연결: 프록시 /gmail/auth-url 확인 필요"); }
+  };
+  const disconnectGmail=(slot)=>{ const n={...gmailTokens}; delete n[slot]; setGmailTokens(n); inboxSave(INBOX_LS_TOKENS,n); };
+  const fetchGmail=async()=>{
+    const tok=gmailTokens[activeSlot]; if(!tok){ toast(`계정${activeSlot}을 먼저 연결해 주세요.`); return; }
+    setLoading(true);
+    try{
+      const r=await fetch(`${PROXY}/gmail/list?slot=${activeSlot}&max=50&q=${encodeURIComponent(gmailQuery||"")}`,{headers:{Authorization:`Bearer ${tok.access_token||tok.token||""}`}});
+      if(!r.ok) throw new Error("gmail list fail");
+      const d=await r.json(); const msgs=d.messages||[];
+      await addItems(msgs.map(m=>({source:"gmail",slot:activeSlot,title:m.subject||"(제목 없음)",from:m.from||"",date:m.date||"",snippet:m.snippet||"",body:m.body||"",rawText:`${m.subject||""}\n${m.from||""}\n${m.body||m.snippet||""}`,gmailId:m.id})));
+    }catch{ toast("Gmail 목록을 가져오지 못했어요. 프록시 /gmail/list 와 토큰을 확인해 주세요."); }
+    setLoading(false);
+  };
+  const fetchYoutube=async()=>{
+    setLoading(true);
+    try{
+      const r=await fetch(`${PROXY}/youtube/liked`,{headers: ytToken?{Authorization:`Bearer ${ytToken}`}:{}});
+      if(!r.ok) throw new Error("yt fail");
+      const d=await r.json(); const vs=d.videos||[];
+      await addItems(vs.map(v=>({source:"youtube",title:v.title,from:v.channel||"",date:"",snippet:v.title,body:`${v.title}\n${v.channel||""}\n${v.url||""}`,rawText:`${v.title}\n${v.channel||""}`,url:v.url||`https://youtube.com/watch?v=${v.id}`})));
+      toast("유튜브 좋아요 목록을 후보로 가져왔어요. 원하는 것만 선택해 주세요.");
+    }catch{ toast("유튜브 좋아요를 가져오지 못했어요. 프록시 /youtube/liked 확인 또는 아래 링크 붙여넣기 백업을 이용해 주세요."); }
+    setLoading(false);
+  };
+  const handlePaste=async()=>{
+    if(!pasteText.trim()){ toast("붙여넣을 내용을 입력해 주세요."); return; }
+    if(pasteSource==="youtube"){
+      const lines=pasteText.split("\n").map(s=>s.trim()).filter(Boolean);
+      await addItems(lines.map(l=>({source:"youtube",title:l,body:l,rawText:l,url:l.startsWith("http")?l:""})));
+    } else if(pasteSource==="kakao"){
+      const chunks=pasteText.split(/\n\s*\n/).filter(Boolean);
+      await addItems(chunks.map(c=>({source:"kakao",title:c.split("\n")[0].slice(0,60),body:c,rawText:c})));
+    } else {
+      await addItems([{source:"email",title:pasteText.split("\n")[0].slice(0,80),body:pasteText,rawText:pasteText}]);
+    }
+    setPasteText("");
+  };
+  const filtered=items.filter(x=>(sourceFilter==="all"||x.source===sourceFilter)&&(catFilter==="all"||x.category===catFilter)&&(catFilter!=="important"||x.isImportantAlert));
+  const toggleSel=(id)=>setSelected(s=>{const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n;});
+  const setCategory=(id,cat)=>setItems(p=>p.map(x=>x.id===id?{...x,category:cat}:x));
+  const confirmToTasks=async()=>{
+    const chosen=items.filter(x=>selected.has(x.id)&&x.category==="task");
+    if(!chosen.length){ toast("할 일로 보낼 후보를 먼저 선택해 주세요. (카테고리가 '할 일'인 것만 이동돼요)"); return; }
+    const tok=todoistToken(); if(!tok){ toast("Todoist 토큰이 없어요. 기존 설정에서 Todoist 토큰을 먼저 연결해 주세요."); return; }
+    setLoading(true); let ok=0;
+    for(const c of chosen){
+      const content=c.taskTitle||c.title;
+      const desc=`[수집함 ${c.source}] ${c.translatedSummary||c.taskDesc||c.snippet||""}\n원문: ${(c.rawText||"").slice(0,500)}\n${c.url?`링크: ${c.url}`:""}\n${c.deadline?`마감: ${c.deadline}`:""}`;
+      try{ const r=await fetch(`${PROXY}/api/v1/tasks`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${tok}`},body:JSON.stringify({content,description:desc,priority:c.priority==="high"?4:1, due_string:c.deadline&&c.deadline!=="내일"&&c.deadline!=="모레"?c.deadline:undefined})}); if(r.ok) ok++; }catch{}
+    }
+    setArchive(p=>[...chosen.map(c=>({...c,status:"sent_to_todoist"})),...p]);
+    setItems(p=>p.filter(x=>!selected.has(x.id)||x.category!=="task"));
+    setSelected(new Set()); setLoading(false); toast(`최종 선택 ${ok}개를 오늘 풀 + Todoist로 보냈어요.`);
+  };
+  const trashSelected=async()=>{
+    const chosen=items.filter(x=>selected.has(x.id));
+    const gmailChosen=chosen.filter(x=>x.source==="gmail"&&x.gmailId);
+    if(!chosen.length){ toast("삭제할 메일을 먼저 선택해 주세요."); return; }
+    if(!confirmTrash){ setConfirmTrash(true); toast("한 번 더 누르면 휴지통으로 이동해요. (완전삭제 아님, 30일 내 복구 가능)"); return; }
+    setConfirmTrash(false); setLoading(true);
+    try{ if(gmailChosen.length){ const slot=gmailChosen[0].slot||activeSlot; await fetch(`${PROXY}/gmail/trash`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({slot,ids:gmailChosen.map(x=>x.gmailId)})}); } }catch{}
+    setArchive(p=>[...chosen.map(c=>({...c,status:"trashed"})),...p]);
+    setItems(p=>p.filter(x=>!selected.has(x.id))); setSelected(new Set()); setLoading(false); toast(`선택 ${chosen.length}개를 휴지통으로 이동했어요.`);
+  };
+  const catLabel=(c)=>c==="trash"?"🗑️ 버릴 것":c==="task"?"✅ 할 일":c==="info"?"📚 정보":c==="doc"?"📄 문서":c==="later"?"⏳ 나중에":"";
+  return (
+    <div className="flex-1 overflow-auto p-2 flex flex-col gap-2 bg-gray-50 dark:bg-gray-950">
+      <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-2 text-[11px]">
+        <div className="font-bold">📥 수집함 — 가져오기 → 검토 → 최종 선택만 할 일로</div>
+        <div className="text-gray-500 dark:text-gray-400 text-[10px] mt-0.5">후보 단계에서는 Todoist에 안 보내요. 내가 체크한 것만 최종 할 일 + Todoist 백업돼요. 삭제는 휴지통 이동만 해요.</div>
+        <div className="flex flex-wrap gap-1 mt-2">
+          <button onClick={()=>setActiveSlot("1")} className={`px-2 py-1 rounded text-[10px] ${activeSlot==="1"?"bg-blue-600 text-white":"bg-gray-100 dark:bg-gray-700"}`}>📧 계정1 {gmailTokens["1"]?`· ${gmailTokens["1"].email||"연결됨"}`:"· 미연결"}</button>
+          <button onClick={()=>setActiveSlot("2")} className={`px-2 py-1 rounded text-[10px] ${activeSlot==="2"?"bg-blue-600 text-white":"bg-gray-100 dark:bg-gray-700"}`}>📧 계정2 {gmailTokens["2"]?`· ${gmailTokens["2"].email||"연결됨"}`:"· 미연결"}</button>
+          <button onClick={()=>connectGmail(activeSlot)} className="px-2 py-1 rounded text-[10px] bg-green-600 text-white">Gmail 연결 (별도 OAuth)</button>
+          {gmailTokens[activeSlot]&&<button onClick={()=>disconnectGmail(activeSlot)} className="px-2 py-1 rounded text-[10px] bg-gray-200 dark:bg-gray-600">연결 해제</button>}
+        </div>
+        <div className="flex gap-1 mt-1">
+          <input value={gmailQuery} onChange={e=>setGmailQuery(e.target.value)} placeholder="Gmail 검색어 (예: 계정 / 결제 / verify)" className="flex-1 border rounded px-2 py-1 text-[11px] dark:bg-gray-900 dark:border-gray-600 outline-none"/>
+          <button onClick={fetchGmail} disabled={loading} className="px-2 py-1 rounded text-[10px] bg-blue-600 text-white">{loading?"불러오는 중…":"Gmail 불러오기"}</button>
+        </div>
+        <div className="flex gap-1 mt-1">
+          <button onClick={fetchYoutube} disabled={loading} className="px-2 py-1 rounded text-[10px] bg-red-600 text-white">▶ 유튜브 좋아요 목록 가져오기</button>
+          <span className="text-[10px] text-gray-500 self-center">안 되면 아래 붙여넣기 백업 사용</span>
+        </div>
+      </div>
+      <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-2">
+        <div className="flex gap-1 text-[10px]">
+          <select value={pasteSource} onChange={e=>setPasteSource(e.target.value)} className="border rounded px-1 py-1 dark:bg-gray-900 dark:border-gray-600"><option value="kakao">💬 카톡 붙여넣기</option><option value="email">📧 이메일 붙여넣기</option><option value="youtube">▶ 유튜브 링크 붙여넣기</option></select>
+          <button onClick={handlePaste} className="px-2 py-1 rounded bg-purple-600 text-white">AI 분류하기</button>
+        </div>
+        <textarea value={pasteText} onChange={e=>setPasteText(e.target.value)} placeholder={pasteSource==="kakao"?"카톡에서 필요한 부분만 복사해서 붙여넣으세요. AI가 할 일만 추출해요.":pasteSource==="youtube"?"유튜브 링크를 줄마다 하나씩 붙여넣으세요.": "이메일 본문을 붙여넣으세요. 영문이면 한국어 번역 + 마감일을 추출해요."} className="w-full mt-1 border rounded p-2 text-[11px] h-20 resize-none dark:bg-gray-900 dark:border-gray-600 outline-none"/>
+        <div className="text-[10px] text-gray-500">원문은 이 기기에만 임시 저장돼요. 확정된 할 일/요약만 Todoist/Supabase로 이동해요.</div>
+      </div>
+      <div className="flex flex-wrap gap-1 text-[10px]">
+        {[["all","전체"],["gmail","Gmail"],["kakao","카톡"],["youtube","유튜브"],["email","이메일"]].map(([v,l])=>(<button key={v} onClick={()=>setSourceFilter(v)} className={`px-2 py-1 rounded ${sourceFilter===v?"bg-black text-white dark:bg-white dark:text-black":"bg-white dark:bg-gray-800 border dark:border-gray-700"}`}>{l}</button>))}
+        <button onClick={()=>setCatFilter("important")} className={`px-2 py-1 rounded ${catFilter==="important"?"bg-red-600 text-white":"bg-white dark:bg-gray-800 border dark:border-gray-700"}`}>🚨 중요 알림만</button>
+        <select value={catFilter} onChange={e=>setCatFilter(e.target.value)} className="border rounded px-1 py-1 dark:bg-gray-900"><option value="all">카테고리 전체</option><option value="trash">🗑️ 버릴 것</option><option value="task">✅ 할 일</option><option value="info">📚 정보</option><option value="doc">📄 문서</option><option value="later">⏳ 나중에</option></select>
+      </div>
+      <div className="flex gap-1">
+        <button onClick={confirmToTasks} disabled={loading} className="flex-1 py-2 rounded bg-blue-600 text-white text-[11px] font-bold">✅ 선택한 할 일 최종 확정 → 오늘 풀 + Todoist ({items.filter(x=>selected.has(x.id)&&x.category==="task").length})</button>
+        <button onClick={trashSelected} disabled={loading} className="px-3 py-2 rounded bg-gray-200 dark:bg-gray-700 text-[11px] font-bold">{confirmTrash?"⚠️ 한 번 더 누르면 휴지통 이동":"🗑️ 선택 휴지통으로"}</button>
+      </div>
+      <div className="text-[10px] text-gray-500">후보 {filtered.length}개 · 선택 {selected.size}개 · AI 추천은 참고용이에요. 최종 결정은 직접 체크해 주세요.</div>
+      {filtered.map(it=>(
+        <div key={it.id} className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-2">
+          <div className="flex gap-1 items-start">
+            <input type="checkbox" checked={selected.has(it.id)} onChange={()=>toggleSel(it.id)} className="mt-1"/>
+            <div className="flex-1 min-w-0">
+              <div className="flex flex-wrap gap-1 items-center text-[10px]"><span>{it.source==="gmail"?"📧":it.source==="kakao"?"💬":it.source==="youtube"?"▶":"📧"} {it.source} {it.slot?`· 계정${it.slot}`:""}</span>{it.english&&<span className="bg-yellow-100 px-1 rounded">EN → KO 번역</span>}{it.isImportantAlert&&<span className="bg-red-100 text-red-700 px-1 rounded font-bold">🚨 중요 · 마감 확인</span>}{it.deadline&&<span className="bg-blue-100 px-1 rounded">마감: {it.deadline}</span>}</div>
+              <div className="font-bold text-[12px] mt-0.5 break-words">{it.translatedTitle||it.taskTitle||it.title}</div>
+              {it.translatedSummary&&<div className="text-[11px] text-gray-700 dark:text-gray-300">번역 요약: {it.translatedSummary}</div>}
+              <div className="text-[11px] text-gray-500 break-words">{it.from?`${it.from} · `:""}{it.date||""} · {it.snippet||""}</div>
+              {it.reason&&<div className="text-[10px] text-gray-400">AI 근거: {it.reason}</div>}
+              <button onClick={()=>setExpandedId(expandedId===it.id?null:it.id)} className="text-[10px] text-blue-600 mt-1">{expandedId===it.id?"본문 접기 ▲":"본문 미리보기 보기 ▼"}</button>
+              {expandedId===it.id&&<div className="mt-1 p-2 bg-gray-50 dark:bg-gray-900 rounded text-[11px] whitespace-pre-wrap break-words max-h-48 overflow-auto">{it.body||it.rawText}</div>}
+              {it.url&&<a href={it.url} target="_blank" rel="noreferrer" className="text-[10px] text-blue-600 underline block mt-1">원본 링크 열기</a>}
+            </div>
+          </div>
+          <div className="flex gap-1 mt-1 text-[10px]">{["trash","task","info","doc","later"].map(c=>(<button key={c} onClick={()=>setCategory(it.id,c)} className={`px-1.5 py-0.5 rounded ${it.category===c?"bg-black text-white dark:bg-white dark:text-black":"bg-gray-100 dark:bg-gray-700"}`}>{catLabel(c)}</button>))}</div>
+        </div>
+      ))}
+      {filtered.length===0&&<div className="text-center text-gray-400 text-[11px] py-6">아직 후보가 없어요. Gmail 불러오기 또는 붙여넣기로 시작해 보세요.</div>}
+      <div className="bg-white dark:bg-gray-800 rounded-lg border dark:border-gray-700 p-2 text-[10px]"><div className="font-bold">📚 보관함 (정보 / 문서 / 보낸 할 일)</div><div className="text-gray-500">{archive.length}개 · 정보/문서는 여기서 확인해요. 나중에 별도 탭으로 분리해도 데이터는 그대로 이동돼요.</div>{archive.slice(0,10).map(a=>(<div key={a.id} className="border-t dark:border-gray-700 py-1 truncate">{catLabel(a.category)} · {a.translatedTitle||a.taskTitle||a.title} · {a.status}</div>))}</div>
+    </div>
+  );
+}
+
 
 // ==========================================
 // [메인] 앱 컨트롤러
@@ -774,9 +969,9 @@ export default function App() {
 
         {/* 탭 메뉴 */}
         <div className="flex border-b border-gray-200 dark:border-gray-800 transition-colors">
-          {["today", "longTerm", "history"].map(tab => (
+          {["today", "inbox", "longTerm", "history"].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 py-1.5 text-[10px] transition-colors ${activeTab === tab ? 'border-b-2 border-black dark:border-white font-bold text-black dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>
-              {tab === "today" ? "오늘 할 일" : tab === "longTerm" ? "중장기계획" : "히스토리"}
+              {tab === "today" ? "오늘 할 일" : tab === "inbox" ? "📥 수집함" : tab === "longTerm" ? "중장기계획" : "히스토리"}
             </button>
           ))}
         </div>
@@ -963,6 +1158,9 @@ export default function App() {
             </DndContext>
           </div>
         )}
+
+        {/* 수집함 탭 v1.23.0 */}
+        {activeTab === "inbox" && (<InboxTab onToast={(m)=>showModal({message:m})} />)}
 
         {/* 중장기계획 탭 */}
         {activeTab === "longTerm" && (
